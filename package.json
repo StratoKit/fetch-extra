@@ -1,0 +1,21 @@
+{
+	"name": "node-fetch-wrapper",
+	"version": "0.0.1",
+	"description": "Wrapper around node-fetch that adds parts needed for SK agent",
+	"main": "index.js",
+	"scripts": {
+		"test": "jest"
+	},
+	"author": "StratoKit",
+	"license": "Copyright",
+	"dependencies": {
+		"abort-controller": "^3.0.0",
+		"node-fetch": "^2.6.1"
+	},
+	"devDependencies": {
+		"delay": "^5.0.0",
+		"fastify": "^3.20.2",
+		"jest": "^27.0.6",
+		"prettier": "^2.3.2"
+	}
+}

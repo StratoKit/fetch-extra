@@ -1,0 +1,10 @@
+.DS_Store
+.happypack
+.nyc_output/
+node_modules
+npm-debug.log
+build
+data
+config/local.yaml
+config/client-dev.dlls.json
+coverage
