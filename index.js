@@ -2,37 +2,63 @@ const origFetch = require('node-fetch')
 const AbortController = require('abort-controller')
 const crypto = require('crypto')
 
+class HttpError extends Error {
+	constructor(status, statusText, response, requestState) {
+		const {
+			id,
+			options: {method},
+			url,
+		} = requestState
+		super(`HTTP error ${status} - ${statusText} (${id} ${method} ${url})`)
+		this.status = status
+		this.statusText = statusText
+		this.response = response
+		this.requestState = requestState
+		Error.captureStackTrace(this, HttpError)
+	}
+}
+
 class TimeoutError extends Error {
-	constructor(type, url, method, reqId) {
-		super(
-			type === 'noProgress'
-				? `Timeout - no progress while fetching a body (${reqId} ${method} ${url})`
-				: type === 'body'
-				? `Timeout while fetching a body (${reqId} ${method} ${url})`
-				: `Timeout while making a request (${reqId} ${method} ${url})`
-		)
+	static messages = {
+		noProgress: 'Timeout - no progress while fetching a body',
+		body: 'Timeout while fetching a body',
+		request: 'Timeout while making a request',
+	}
+
+	constructor(type, requestState) {
+		const {
+			id,
+			options: {method},
+			url,
+		} = requestState
+
+		super(`${TimeoutError.messages[type]} (${id} ${method} ${url})`)
 		this.type = type
 		this.url = url
 		this.method = method
-		this.reqId = reqId
+		this.requestState = requestState
 		Error.captureStackTrace(this, TimeoutError)
 	}
 }
 
 const fetch = async (url, options = {}, requestState = {}) => {
-	options.method = options.method.toUpperCase() || 'GET'
-	if (!requestState.id) {
-		requestState.id = crypto.randomBytes(3).toString('hex')
-	}
+	requestState.url = url
+	requestState.options = options
+	requestState.id ||= crypto.randomBytes(3).toString('hex')
 	if (!requestState.attempts) {
 		requestState.attempts = 0
+	} else {
+		requestState.attempts++
 	}
+
+	options.method = options.method.toUpperCase() || 'GET'
 	let controller, requestTimeout, bodyTimeout, noProgressTimeout
 	let timeoutReason
 	if (options.timeouts) {
 		controller = new AbortController()
 		if (options.timeouts.request) {
 			requestTimeout = setTimeout(() => {
+				timeoutReason = 'request'
 				controller.abort()
 			}, options.timeouts.request)
 		}
@@ -44,6 +70,9 @@ const fetch = async (url, options = {}, requestState = {}) => {
 	try {
 		res = await origFetch(url, options)
 		clearTimeout(requestTimeout)
+		if (options.throwOnBadStatus && !res.ok) {
+			throw new HttpError(res.status, res.statusText, res, requestState)
+		}
 
 		res.body.on('resume', () => {
 			if (options.timeouts?.body && !bodyTimeout) {
@@ -83,12 +112,7 @@ const fetch = async (url, options = {}, requestState = {}) => {
 			res[fKey] = function (...args) {
 				return f.call(res, args).catch(e => {
 					if (e.type === 'aborted') {
-						throw new TimeoutError(
-							timeoutReason,
-							url,
-							options.method,
-							requestState.id
-						)
+						throw new TimeoutError(timeoutReason, requestState)
 					}
 					throw e
 				})
@@ -97,12 +121,7 @@ const fetch = async (url, options = {}, requestState = {}) => {
 		return res
 	} catch (e) {
 		if (e.type === 'aborted') {
-			throw new TimeoutError(
-				timeoutReason,
-				url,
-				options.method,
-				requestState.id
-			)
+			throw new TimeoutError(timeoutReason, requestState)
 		}
 		throw e
 	} finally {

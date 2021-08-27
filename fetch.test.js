@@ -1,6 +1,7 @@
 const fetch = require('.')
 const {Readable} = require('stream')
 const delay = require('delay')
+const {AbortSignal} = require('abort-controller')
 
 class TimeoutStream extends Readable {
 	constructor(size, speed, timeouts) {
@@ -33,15 +34,19 @@ const fastify = require('fastify')()
 fastify.route({
 	method: 'POST',
 	url: '/',
-	handler: async req => {
+	handler: async (req, rep) => {
 		const {
 			requestTimeout,
 			size = 1024 * 1024,
 			speed,
 			bodyTimeouts = [],
+			status,
 		} = req.body
 		if (requestTimeout) {
 			await delay(requestTimeout)
+		}
+		if (status) {
+			rep.code(status)
 		}
 		return new TimeoutStream(size, speed, bodyTimeouts)
 	},
@@ -76,9 +81,28 @@ describe('request timeout', () => {
 		await res.buffer()
 	})
 	test('times out', async () => {
-		await expect(
-			makeReq({requestTimeout: 500}, {timeouts: {request: 150}})
-		).rejects.toThrow('Timeout while making a request')
+		let err
+		await makeReq({requestTimeout: 500}, {timeouts: {request: 150}}).catch(
+			e => {
+				err = e
+			}
+		)
+
+		expect(err.message).toMatch('Timeout while making a request')
+		expect(await err.requestState).toEqual({
+			attempts: 0,
+			id: expect.any(String),
+			url: expect.any(String),
+			options: {
+				body: '{"requestTimeout":500}',
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+				timeouts: {request: 150},
+				signal: expect.any(AbortSignal),
+			},
+		})
 	})
 })
 
@@ -123,9 +147,40 @@ describe('no-progress timeout', () => {
 	})
 	test('does not timeout (slow progress)', async () => {
 		const res = await makeReq(
-			{speed: 512 * 1024},
-			{timeouts: {noProgress: 150}}
+			{speed: 2048 * 1024},
+			{timeouts: {noProgress: 100}}
 		)
 		await res.buffer()
 	})
 })
+
+describe('throwOnBadStatus', () => {
+	test('off', async () => {
+		const res = await makeReq({status: 404}, {})
+		await res.buffer()
+	})
+	test('on', async () => {
+		let err
+		await makeReq({status: 404}, {throwOnBadStatus: true}).catch(e => {
+			err = e
+		})
+		expect(await err.requestState).toEqual({
+			attempts: 0,
+			id: expect.any(String),
+			url: expect.any(String),
+			options: {
+				body: '{"status":404}',
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+				throwOnBadStatus: true,
+			},
+		})
+		expect(await err.requestState).toBeTruthy()
+		expect(await err.response.buffer()).toBeTruthy()
+		expect(err.message).toMatch('HTTP error 404 - Not Found')
+	})
+})
+
+describe('shouldRetry', () => {})
