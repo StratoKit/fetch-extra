@@ -40,18 +40,38 @@ class TimeoutError extends Error {
 		this.url = url
 		this.method = method
 		this.requestState = requestState
-		dbg(`Request #${requestState.id} failed, reason - ${type} timeout`)
+		if (dbg.enabled)
+			dbg(`Request #${requestState.id} failed, reason - ${type} timeout`)
 		Error.captureStackTrace(this, TimeoutError)
 	}
 }
 
-const fetch = async (url, origOptions = {}, requestState = {attempts: 0}) => {
+const fetch = async (
+	url,
+	origOptions = {maxAttempts: 5, shouldRetry: null},
+	requestState = {attempts: 0}
+) => {
 	requestState.url = url
 	requestState.options = origOptions
 	requestState.id ||= crypto.randomBytes(3).toString('hex')
+	if (!requestState.attempts) requestState.attempts = 0
+	if (!origOptions.maxAttempts) origOptions.maxAttempts = 5
 	requestState.attempts++
 
 	const options = {...origOptions}
+
+	const wrapShouldRetry = () => {
+		if (requestState.attempts >= options.maxAttempts) return false
+		if (options.shouldRetry && typeof options.shouldRetry === 'function')
+			return options.shouldRetry({url, origOptions, requestState})
+		else return false
+	}
+
+	const retry = async (url, origOptions, requestState) => {
+		dbg(`#${requestState.id} retry no.${requestState.attempts}...`)
+		return await fetch(url, origOptions, requestState)
+	}
+
 	options.method = options.method.toUpperCase() || 'GET'
 	let controller, requestTimeout, bodyTimeout, noProgressTimeout
 	let timeoutReason
@@ -114,8 +134,10 @@ const fetch = async (url, origOptions = {}, requestState = {attempts: 0}) => {
 		]) {
 			const f = res[fKey]
 			res[fKey] = function (...args) {
-				return f.call(res, args).catch(e => {
+				return f.call(res, args).catch(async e => {
 					if (e.type === 'aborted' && timeoutReason) {
+						if (wrapShouldRetry())
+							return await retry(url, origOptions, requestState)
 						throw new TimeoutError(timeoutReason, requestState)
 					}
 					throw e
@@ -125,6 +147,7 @@ const fetch = async (url, origOptions = {}, requestState = {attempts: 0}) => {
 		return res
 	} catch (e) {
 		if (e.type === 'aborted' && timeoutReason) {
+			if (wrapShouldRetry()) return await retry(url, origOptions, requestState)
 			throw new TimeoutError(timeoutReason, requestState)
 		}
 		throw e

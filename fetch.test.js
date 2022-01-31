@@ -53,13 +53,17 @@ fastify.route({
 })
 
 let port
-const makeReq = (reqOptions, fetchOptions) =>
-	fetch(`http://localhost:${port}`, {
-		method: 'POST',
-		body: JSON.stringify(reqOptions),
-		headers: {'content-type': 'application/json'},
-		...fetchOptions,
-	})
+const makeReq = (reqOptions, fetchOptions, reqState = {}) =>
+	fetch(
+		`http://localhost:${port}`,
+		{
+			method: 'POST',
+			body: JSON.stringify(reqOptions),
+			headers: {'content-type': 'application/json'},
+			...fetchOptions,
+		},
+		reqState
+	)
 
 beforeAll(async () => {
 	await fastify.listen(0)
@@ -90,7 +94,7 @@ describe('request timeout', () => {
 
 		expect(err.message).toMatch('Timeout while making a request')
 		expect(await err.requestState).toEqual({
-			attempts: 0,
+			attempts: 1,
 			id: expect.any(String),
 			url: expect.any(String),
 			options: {
@@ -183,4 +187,14 @@ describe('throwOnBadStatus', () => {
 	})
 })
 
-describe('shouldRetry', () => {})
+describe.only('shouldRetry', () => {
+	test('times out', async () => {
+		let err
+		await makeReq(
+			{requestTimeout: 500},
+			{timeouts: {request: 150}, shouldRetry: () => true}
+		).catch(e => {
+			console.log('ERR', e)
+		})
+	})
+})
