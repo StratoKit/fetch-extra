@@ -41,16 +41,13 @@ class TimeoutError extends Error {
 	}
 }
 
-const fetch = async (url, options = {}, requestState = {}) => {
+const fetch = async (url, origOptions = {}, requestState = {attempts: 0}) => {
 	requestState.url = url
-	requestState.options = options
+	requestState.options = origOptions
 	requestState.id ||= crypto.randomBytes(3).toString('hex')
-	if (!requestState.attempts) {
-		requestState.attempts = 0
-	} else {
-		requestState.attempts++
-	}
+	requestState.attempts++
 
+	const options = {...origOptions}
 	options.method = options.method.toUpperCase() || 'GET'
 	let controller, requestTimeout, bodyTimeout, noProgressTimeout
 	let timeoutReason
@@ -64,6 +61,9 @@ const fetch = async (url, options = {}, requestState = {}) => {
 		}
 	}
 	if (controller) {
+		// it means that we break the api
+		// by removing signal given by the user
+		// todo: combine signals https://github.com/whatwg/fetch/issues/905#issuecomment-491970649
 		options.signal = controller.signal
 	}
 	let res
@@ -111,7 +111,7 @@ const fetch = async (url, options = {}, requestState = {}) => {
 			const f = res[fKey]
 			res[fKey] = function (...args) {
 				return f.call(res, args).catch(e => {
-					if (e.type === 'aborted') {
+					if (e.type === 'aborted' && timeoutReason) {
 						throw new TimeoutError(timeoutReason, requestState)
 					}
 					throw e
@@ -120,7 +120,7 @@ const fetch = async (url, options = {}, requestState = {}) => {
 		}
 		return res
 	} catch (e) {
-		if (e.type === 'aborted') {
+		if (e.type === 'aborted' && timeoutReason) {
 			throw new TimeoutError(timeoutReason, requestState)
 		}
 		throw e
