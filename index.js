@@ -1,6 +1,9 @@
 const origFetch = require('node-fetch')
 const AbortController = require('abort-controller')
 const crypto = require('crypto')
+const debug = require('debug')
+
+const dbg = debug('fetch')
 
 class HttpError extends Error {
 	constructor(status, statusText, response, requestState) {
@@ -37,6 +40,7 @@ class TimeoutError extends Error {
 		this.url = url
 		this.method = method
 		this.requestState = requestState
+		dbg(`Request #${requestState.id} failed, reason - ${type} timeout`)
 		Error.captureStackTrace(this, TimeoutError)
 	}
 }

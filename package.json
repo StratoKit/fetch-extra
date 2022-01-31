@@ -10,6 +10,7 @@
 	"license": "Copyright",
 	"dependencies": {
 		"abort-controller": "^3.0.0",
+		"debug": "^4.3.3",
 		"node-fetch": "^2.6.1"
 	},
 	"devDependencies": {
