@@ -2,9 +2,11 @@ const origFetch = require('node-fetch')
 const AbortController = require('abort-controller')
 const crypto = require('crypto')
 const debug = require('debug')
-
+const {Sema, RateLimit} = require('async-sema')
 const dbg = debug('fetch')
 
+const sema = new Sema(5)
+const limiter = RateLimit(10, {uniformDistribution: true})
 class HttpError extends Error {
 	constructor(status, statusText, response, requestState) {
 		const {
@@ -92,6 +94,14 @@ const fetch = async (
 	}
 	let res
 	try {
+		if (dbg.enabled)
+			dbg(requestState.id, options.method, requestState.url, options)
+		await sema.acquire()
+		await limiter()
+		if (dbg.enabled) {
+			const ms = Date.now() - now
+			if (ms > 5) dbg(`limiter waited ${ms}ms`)
+		}
 		res = await origFetch(url, options)
 		clearTimeout(requestTimeout)
 		if (options.throwOnBadStatus && !res.ok) {
@@ -153,6 +163,7 @@ const fetch = async (
 		throw e
 	} finally {
 		clearTimeout(requestTimeout)
+		await sema.release()
 	}
 }
 
