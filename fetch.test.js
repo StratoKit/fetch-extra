@@ -53,17 +53,20 @@ fastify.route({
 })
 
 let port
-const makeReq = (reqOptions, fetchOptions, reqState = {}) =>
-	fetch(
+const makeReq = (reqOptions, fetchOptions, reqState = {}, maxAttempts = 1) => {
+	return fetch(
 		`http://localhost:${port}`,
 		{
 			method: 'POST',
 			body: JSON.stringify(reqOptions),
 			headers: {'content-type': 'application/json'},
 			...fetchOptions,
+			maxAttempts,
+			shouldRetry: () => true,
 		},
 		reqState
 	)
+}
 
 beforeAll(async () => {
 	await fastify.listen(0)
@@ -103,8 +106,9 @@ describe('request timeout', () => {
 					'content-type': 'application/json',
 				},
 				method: 'POST',
+				maxAttempts: 1,
+				shouldRetry: expect.any(Function),
 				timeouts: {request: 150},
-				signal: expect.any(AbortSignal),
 			},
 		})
 	})
@@ -169,7 +173,7 @@ describe('throwOnBadStatus', () => {
 			err = e
 		})
 		expect(await err.requestState).toEqual({
-			attempts: 0,
+			attempts: 1,
 			id: expect.any(String),
 			url: expect.any(String),
 			options: {
@@ -178,6 +182,8 @@ describe('throwOnBadStatus', () => {
 					'content-type': 'application/json',
 				},
 				method: 'POST',
+				maxAttempts: 1,
+				shouldRetry: expect.any(Function),
 				throwOnBadStatus: true,
 			},
 		})
@@ -187,14 +193,33 @@ describe('throwOnBadStatus', () => {
 	})
 })
 
-describe.only('shouldRetry', () => {
-	test('times out', async () => {
+describe('shouldRetry', () => {
+	test('request timeout, should retry 5 times', async () => {
 		let err
 		await makeReq(
-			{requestTimeout: 500},
-			{timeouts: {request: 150}, shouldRetry: () => true}
+			{requestTimeout: 1000},
+			{timeouts: {request: 150}},
+			{},
+			5
 		).catch(e => {
-			console.log('ERR', e)
+			err = e
+		})
+
+		expect(err.message).toMatch('Timeout while making a request')
+		expect(await err.requestState).toEqual({
+			attempts: 5,
+			id: expect.any(String),
+			url: expect.any(String),
+			options: {
+				body: '{"requestTimeout":1000}',
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+				maxAttempts: 5,
+				shouldRetry: expect.any(Function),
+				timeouts: {request: 150},
+			},
 		})
 	})
 })
