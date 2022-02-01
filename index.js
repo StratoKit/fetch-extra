@@ -43,7 +43,9 @@ class TimeoutError extends Error {
 		this.method = method
 		this.requestState = requestState
 		if (dbg.enabled)
-			dbg(`Request #${requestState.id} failed, reason - ${type} timeout`)
+			dbg(
+				`Request #${requestState.id} failed, reason - ${type} timeout (${TimeoutError.messages[type]})`
+			)
 		Error.captureStackTrace(this, TimeoutError)
 	}
 }
@@ -97,6 +99,7 @@ const fetch = async (
 		if (dbg.enabled)
 			dbg(requestState.id, options.method, requestState.url, options)
 		await sema.acquire()
+		const now = Date.now()
 		await limiter()
 		if (dbg.enabled) {
 			const ms = Date.now() - now
