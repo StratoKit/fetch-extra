@@ -42,41 +42,23 @@ class TimeoutError extends Error {
 		this.url = url
 		this.method = method
 		this.requestState = requestState
-		if (dbg.enabled)
-			dbg(
-				`Request #${requestState.id} failed, reason - ${type} timeout (${TimeoutError.messages[type]})`
-			)
+		this.headers = requestState.headers
 		Error.captureStackTrace(this, TimeoutError)
 	}
 }
 
 const fetch = async (
 	url,
-	origOptions = {maxAttempts: 5, shouldRetry: null},
-	requestState = {attempts: 0}
+	origOptions = {shouldRetry: null},
+	requestState = {}
 ) => {
 	requestState.url = url
 	requestState.options = origOptions
 	requestState.id ||= crypto.randomBytes(3).toString('hex')
-	if (!requestState.attempts) requestState.attempts = 0
-	if (!origOptions.maxAttempts) origOptions.maxAttempts = 5
-	requestState.attempts++
+	requestState.attempts ||= 1
 
 	const options = {...origOptions}
 
-	const wrapShouldRetry = () => {
-		if (requestState.attempts >= options.maxAttempts) return false
-		if (options.shouldRetry && typeof options.shouldRetry === 'function')
-			return options.shouldRetry({url, origOptions, requestState})
-		else return false
-	}
-
-	const retry = async (url, origOptions, requestState) => {
-		dbg(`#${requestState.id} retry no.${requestState.attempts}...`)
-		return await fetch(url, origOptions, requestState)
-	}
-
-	options.method = options.method.toUpperCase() || 'GET'
 	let controller, requestTimeout, bodyTimeout, noProgressTimeout
 	let timeoutReason
 	if (options.timeouts) {
@@ -147,10 +129,8 @@ const fetch = async (
 		]) {
 			const f = res[fKey]
 			res[fKey] = function (...args) {
-				return f.call(res, args).catch(async e => {
+				return f.call(res, args).catch(e => {
 					if (e.type === 'aborted' && timeoutReason) {
-						if (wrapShouldRetry())
-							return await retry(url, origOptions, requestState)
 						throw new TimeoutError(timeoutReason, requestState)
 					}
 					throw e
@@ -160,7 +140,6 @@ const fetch = async (
 		return res
 	} catch (e) {
 		if (e.type === 'aborted' && timeoutReason) {
-			if (wrapShouldRetry()) return await retry(url, origOptions, requestState)
 			throw new TimeoutError(timeoutReason, requestState)
 		}
 		throw e
@@ -170,4 +149,50 @@ const fetch = async (
 	}
 }
 
-module.exports = fetch
+const fetchWithRetry = async ({
+	url,
+	options,
+	validateResponse,
+	validateJson,
+	maxAttempts,
+}) => {
+	let reqId = crypto.randomBytes(3).toString('hex')
+	options.method = options.method.toUpperCase() || 'GET'
+	maxAttempts ||= 1
+	let attempts = 0
+	let res
+
+	const withoutBody = res => {
+		const {buffer, blob, arrayBuffer, json, text, textConverted, ...rest} = res
+		return rest
+	}
+
+	do {
+		attempts++
+		if (attempts > 1) dbg(`Request #${reqId} - retrying... (${attempts})`)
+		try {
+			res = await fetch(url, options, {id: reqId, attempts})
+			if (
+				validateResponse &&
+				!validateResponse({
+					response: withoutBody(res),
+					method: options.method,
+					url,
+				})
+			)
+				throw new Error(`Request #${reqId} - invalid response`)
+			else if (
+				validateJson &&
+				!validateJson({json: await res.json(), method: options.method, url})
+			)
+				throw new Error(`Request #${reqId} - invalid JSON`)
+
+			return res
+		} catch (e) {
+			if (attempts >= maxAttempts) throw e
+			else dbg(e.message)
+		}
+	} while (attempts < maxAttempts)
+}
+
+module.exports = fetchWithRetry

@@ -53,19 +53,29 @@ fastify.route({
 })
 
 let port
-const makeReq = (reqOptions, fetchOptions, reqState = {}, maxAttempts = 1) => {
-	return fetch(
-		`http://localhost:${port}`,
-		{
+const makeReq = (reqOptions, fetchOptions, options = {}, maxAttempts = 1) => {
+	// return fetch(
+	// 	`http://localhost:${port}`,
+	// 	{
+	// 		method: 'POST',
+	// 		body: JSON.stringify(reqOptions),
+	// 		headers: {'content-type': 'application/json'},
+	// 		...fetchOptions,
+	// 	},
+	// 	reqState
+	// )
+
+	return fetch({
+		url: `http://localhost:${port}`,
+		options: {
 			method: 'POST',
 			body: JSON.stringify(reqOptions),
 			headers: {'content-type': 'application/json'},
 			...fetchOptions,
-			maxAttempts,
-			shouldRetry: () => true,
 		},
-		reqState
-	)
+		maxAttempts,
+		...options,
+	})
 }
 
 beforeAll(async () => {
@@ -106,8 +116,6 @@ describe('request timeout', () => {
 					'content-type': 'application/json',
 				},
 				method: 'POST',
-				maxAttempts: 1,
-				shouldRetry: expect.any(Function),
 				timeouts: {request: 150},
 			},
 		})
@@ -182,8 +190,6 @@ describe('throwOnBadStatus', () => {
 					'content-type': 'application/json',
 				},
 				method: 'POST',
-				maxAttempts: 1,
-				shouldRetry: expect.any(Function),
 				throwOnBadStatus: true,
 			},
 		})
@@ -193,17 +199,14 @@ describe('throwOnBadStatus', () => {
 	})
 })
 
-describe('shouldRetry', () => {
-	test('request timeout, should retry 5 times', async () => {
+describe('Retrying failed requests', () => {
+	test('request timeout, 5 attempts', async () => {
 		let err
-		await makeReq(
-			{requestTimeout: 1000},
-			{timeouts: {request: 150}},
-			{},
-			5
-		).catch(e => {
-			err = e
-		})
+		await makeReq({requestTimeout: 1000}, {timeouts: {request: 150}}, 5).catch(
+			e => {
+				err = e
+			}
+		)
 
 		expect(err.message).toMatch('Timeout while making a request')
 		expect(await err.requestState).toEqual({
@@ -216,10 +219,25 @@ describe('shouldRetry', () => {
 					'content-type': 'application/json',
 				},
 				method: 'POST',
-				maxAttempts: 5,
-				shouldRetry: expect.any(Function),
 				timeouts: {request: 150},
 			},
 		})
+	})
+})
+
+describe.only('Validating', () => {
+	test('Validate response', async () => {
+		// let err
+		await makeReq(
+			{status: 200},
+			{},
+			{
+				validateResponse: async args => {
+					debugger
+					let a = await args.response.buffer()
+					let test = args.json()
+				},
+			}
+		)
 	})
 })
