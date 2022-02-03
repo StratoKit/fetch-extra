@@ -1,4 +1,4 @@
-const fetch = require('.')
+const {fetch} = require('.')
 const {Readable} = require('stream')
 const delay = require('delay')
 const {AbortSignal} = require('abort-controller')
@@ -53,29 +53,17 @@ fastify.route({
 })
 
 let port
-const makeReq = (reqOptions, fetchOptions, options = {}, maxAttempts = 1) => {
-	// return fetch(
-	// 	`http://localhost:${port}`,
-	// 	{
-	// 		method: 'POST',
-	// 		body: JSON.stringify(reqOptions),
-	// 		headers: {'content-type': 'application/json'},
-	// 		...fetchOptions,
-	// 	},
-	// 	reqState
-	// )
-
-	return fetch({
-		url: `http://localhost:${port}`,
-		options: {
+const makeReq = (origOptions, extraOptions) => {
+	return fetch(
+		`http://localhost:${port}`,
+		{
 			method: 'POST',
-			body: JSON.stringify(reqOptions),
+			body: JSON.stringify(origOptions),
 			headers: {'content-type': 'application/json'},
-			...fetchOptions,
+			...origOptions,
 		},
-		maxAttempts,
-		...options,
-	})
+		{...extraOptions}
+	)
 }
 
 beforeAll(async () => {
@@ -94,16 +82,14 @@ test('no timeout', async () => {
 
 describe('request timeout', () => {
 	test('makes it on time', async () => {
-		const res = await makeReq({}, {timeouts: {request: 150}})
+		const res = await makeReq({}, {requestTimeout: 150})
 		await res.buffer()
 	})
 	test('times out', async () => {
 		let err
-		await makeReq({requestTimeout: 500}, {timeouts: {request: 150}}).catch(
-			e => {
-				err = e
-			}
-		)
+		await makeReq({requestTimeout: 500}, {requestTimeout: 150}).catch(e => {
+			err = e
+		})
 
 		expect(err.message).toMatch('Timeout while making a request')
 		expect(await err.requestState).toEqual({
