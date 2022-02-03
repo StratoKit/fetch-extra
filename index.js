@@ -141,12 +141,6 @@ const fetch = async (resource, origOptions, extraOptions = {retry: 1}) => {
 			}
 
 			res.body.on('resume', () => {
-				if (options.bodyTimeout && !bodyTimeout) {
-					bodyTimeout = setTimeout(() => {
-						timeoutReason = 'body'
-						controller.abort()
-					}, options.timeouts.body)
-				}
 				if (options.stallTimeout && !stallTimeout) {
 					stallTimeout = setTimeout(() => {
 						timeoutReason = 'noProgress'
