@@ -8,7 +8,7 @@ const {omit, pick} = require('lodash')
 
 const globalSema = new Sema(5)
 const globalLimiter = RateLimit(10, {uniformDistribution: true})
-const fetchId = 1
+let fetchId = 0
 
 const responseTypes = [
 	'buffer',
@@ -75,6 +75,7 @@ class TimeoutError extends Error {
 }
 
 const fetch = async (resource, options) => {
+	fetchId++
 	let err, res, sema, limiter
 	if (!this.sema) sema = globalSema
 	else sema = this.sema
@@ -91,7 +92,6 @@ const fetch = async (resource, options) => {
 		fetchId,
 	}
 
-	fetchId++
 	const fetchStats = {}
 
 	const retry = async () => {
@@ -163,9 +163,17 @@ const fetch = async (resource, options) => {
 			// TODO call validate with res without body
 			options.validate(res, fetchState)
 			clearTimeout(requestTimeout)
-			if (options.throwOnBadStatus && !res.ok) {
-				throw new HttpError(res.status, res.statusText, res, fetchState)
-			}
+			// if (options.throwOnBadStatus && !res.ok) {
+			// 	throw new HttpError(res.status, res.statusText, res, fetchState)
+			// }
+
+			// to put it somewhere...
+			// if (options.bodyTimeout && !bodyTimeout) {
+			// 	bodyTimeout = setTimeout(() => {
+			// 		timeoutReason = 'body'
+			// 		controller.abort()
+			// 	}, options.timeouts.body)
+			// }
 
 			res.body.on('resume', () => {
 				if (options.stallTimeout && !stallTimeout) {
