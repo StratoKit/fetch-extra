@@ -4,9 +4,11 @@ const crypto = require('crypto')
 const debug = require('debug')
 const {Sema, RateLimit} = require('async-sema')
 const dbg = debug('fetch')
+const {omit, pick} = require('lodash')
 
 const globalSema = new Sema(5)
 const globalLimiter = RateLimit(10, {uniformDistribution: true})
+const fetchId = 1
 
 const responseTypes = [
 	'buffer',
@@ -16,6 +18,22 @@ const responseTypes = [
 	'text',
 	'textConverted',
 ]
+
+const extraOptionsFields = [
+	'retry',
+	'timeout',
+	'requestTimeout',
+	'bodyTimeout',
+	'stallTimeout',
+	'validate',
+	'validateBuffer',
+	'validateBlob',
+	'validateArrayBuffer',
+	'validateJson',
+	'validateText',
+	'validateTextConverted',
+]
+
 class HttpError extends Error {
 	constructor(status, statusText, response, requestState) {
 		const {
@@ -56,25 +74,27 @@ class TimeoutError extends Error {
 	}
 }
 
-const fetch = async (resource, origOptions, extraOptions = {retry: 1}) => {
+const fetch = async (resource, options) => {
 	let err, res, sema, limiter
 	if (!this.sema) sema = globalSema
 	else sema = this.sema
 	if (!this.limiter) limiter = globalLimiter
 	else limiter = this.limiter
 
-	const options = Object.assign({}, origOptions, extraOptions)
+	const fetchOptions = omit(options, extraOptionsFields)
+	const extraOptions = pick(options, extraOptionsFields)
 
 	const fetchState = {
 		resource,
 		options,
 		retryCount: 0,
-		fetchId: crypto.randomBytes(3).toString('hex'),
+		fetchId,
 	}
 
+	fetchId++
 	const fetchStats = {}
 
-	const retry = () => {
+	const retry = async () => {
 		const attempt = fetchState.retryCount
 		if (typeof extraOptions.retry === 'number') {
 			if (attempt > 1)
@@ -85,14 +105,21 @@ const fetch = async (resource, origOptions, extraOptions = {retry: 1}) => {
 				return false
 			}
 		} else if (typeof extraOptions.retry === 'function') {
-			const retryResult = extraOptions.retry({
+			const retryResult = await extraOptions.retry({
 				error: err,
 				response: res,
 				fetchState,
 			})
 
 			if (typeof retryResult === 'object') {
-				fetchState = retryResult
+				fetchState = {
+					resource: retryResult.resource,
+					options: {
+						...retryResult.options,
+						...fetchState.options,
+					},
+					...fetchState,
+				}
 				return true
 			}
 			if (retryResult === true) return true
@@ -132,7 +159,7 @@ const fetch = async (resource, origOptions, extraOptions = {retry: 1}) => {
 				const ms = Date.now() - now
 				if (ms > 5) dbg(`limiter waited ${ms}ms`)
 			}
-			res = await origFetch(resource, options)
+			res = await origFetch(resource, fetchOptions)
 			// TODO call validate with res without body
 			options.validate(res, fetchState)
 			clearTimeout(requestTimeout)
@@ -201,7 +228,7 @@ const fetch = async (resource, origOptions, extraOptions = {retry: 1}) => {
 			clearTimeout(requestTimeout)
 			await sema.release()
 		}
-	} while (retry())
+	} while (await retry())
 }
 
 const makeFetch = (semaLimit, rateLimit) => {
