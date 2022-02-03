@@ -160,6 +160,13 @@ const fetch = async (resource, origOptions, extraOptions = {retry: 1}) => {
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
 			})
+
+			res.body.on('error', err => {
+				clearTimeout(bodyTimeout)
+				clearTimeout(stallTimeout)
+				throw new HttpError(res.status, res.statusText, res, fetchState)
+			})
+
 			for (const fKey of responseTypes) {
 				const prev = res[fKey]
 				res[fKey] = async function (...args) {
