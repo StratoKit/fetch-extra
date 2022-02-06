@@ -1,8 +1,9 @@
 const {fetch} = require('.')
 const {Readable} = require('stream')
-const delay = require('delay')
 const {AbortSignal} = require('abort-controller')
+const delay = require('delay')
 
+jest.setTimeout(1000000)
 class TimeoutStream extends Readable {
 	constructor(size, speed, timeouts) {
 		super()
@@ -48,22 +49,19 @@ fastify.route({
 		if (status) {
 			rep.code(status)
 		}
+
 		return new TimeoutStream(size, speed, bodyTimeouts)
 	},
 })
 
 let port
-const makeReq = (origOptions, extraOptions) => {
-	return fetch(
-		`http://localhost:${port}`,
-		{
-			method: 'POST',
-			body: JSON.stringify(origOptions),
-			headers: {'content-type': 'application/json'},
-			...origOptions,
-		},
-		{...extraOptions}
-	)
+const makeReq = async (reqOptions, options) => {
+	return await fetch(`http://localhost:${port}`, {
+		method: 'POST',
+		body: JSON.stringify(reqOptions),
+		headers: {'content-type': 'application/json'},
+		...options,
+	})
 }
 
 beforeAll(async () => {
@@ -82,29 +80,18 @@ test('no timeout', async () => {
 
 describe('request timeout', () => {
 	test('makes it on time', async () => {
-		const res = await makeReq({}, {requestTimeout: 150})
+		const res = await makeReq({}, {timeouts: {request: 150}})
 		await res.buffer()
 	})
 	test('times out', async () => {
 		let err
-		await makeReq({requestTimeout: 500}, {requestTimeout: 150}).catch(e => {
-			err = e
-		})
+		await makeReq({requestTimeout: 500}, {timeouts: {request: 150}}).catch(
+			e => {
+				err = e
+			}
+		)
 
 		expect(err.message).toMatch('Timeout while making a request')
-		expect(await err.requestState).toEqual({
-			attempts: 1,
-			id: expect.any(String),
-			url: expect.any(String),
-			options: {
-				body: '{"requestTimeout":500}',
-				headers: {
-					'content-type': 'application/json',
-				},
-				method: 'POST',
-				timeouts: {request: 150},
-			},
-		})
 	})
 })
 
@@ -118,7 +105,8 @@ describe('body timeout', () => {
 			{bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {body: 150}}
 		)
-		await expect(res.buffer()).rejects.toThrow('Timeout while fetching a body')
+		const test = await res.buffer()
+		expect(await res.buffer()).rejects.toThrow('Timeout while fetching a body')
 	})
 	test('times out (slow progress)', async () => {
 		const res = await makeReq({speed: 128 * 1024}, {timeouts: {body: 150}})
@@ -128,13 +116,13 @@ describe('body timeout', () => {
 
 describe('no-progress timeout', () => {
 	test('makes it on time', async () => {
-		const res = await makeReq({}, {timeouts: {noProgress: 150}})
+		const res = await makeReq({}, {timeouts: {stall: 150}})
 		await res.buffer()
 	})
 	test('times out (no progress)', async () => {
 		const res = await makeReq(
 			{bodyTimeouts: [{after: 500, time: 500}]},
-			{timeouts: {noProgress: 150}}
+			{timeouts: {stall: 150}}
 		)
 		await expect(res.buffer()).rejects.toThrow(
 			'Timeout - no progress while fetching a body'
@@ -156,74 +144,57 @@ describe('no-progress timeout', () => {
 	})
 })
 
-describe('throwOnBadStatus', () => {
-	test('off', async () => {
-		const res = await makeReq({status: 404}, {})
-		await res.buffer()
-	})
-	test('on', async () => {
-		let err
-		await makeReq({status: 404}, {throwOnBadStatus: true}).catch(e => {
+describe('Retrying', () => {
+	test('Retry 5 times', async () => {
+		await makeReq(
+			{requestTimeout: 1000},
+			{timeouts: {request: 150}, retry: 5}
+		).catch(e => {
 			err = e
 		})
-		expect(await err.requestState).toEqual({
-			attempts: 1,
-			id: expect.any(String),
-			url: expect.any(String),
-			options: {
-				body: '{"status":404}',
-				headers: {
-					'content-type': 'application/json',
-				},
-				method: 'POST',
-				throwOnBadStatus: true,
-			},
-		})
-		expect(await err.requestState).toBeTruthy()
-		expect(await err.response.buffer()).toBeTruthy()
-		expect(err.message).toMatch('HTTP error 404 - Not Found')
-	})
-})
-
-describe('Retrying failed requests', () => {
-	test('request timeout, 5 attempts', async () => {
-		let err
-		await makeReq({requestTimeout: 1000}, {timeouts: {request: 150}}, 5).catch(
-			e => {
-				err = e
-			}
-		)
 
 		expect(err.message).toMatch('Timeout while making a request')
-		expect(await err.requestState).toEqual({
-			attempts: 5,
-			id: expect.any(String),
-			url: expect.any(String),
-			options: {
-				body: '{"requestTimeout":1000}',
-				headers: {
-					'content-type': 'application/json',
-				},
-				method: 'POST',
+		expect(err.fetchState.retryCount).toBe(5)
+	})
+
+	test('Add authorization header on retry', async () => {
+		await makeReq(
+			{requestTimeout: 1000},
+			{
 				timeouts: {request: 150},
-			},
+				retry: 5,
+				retry: ({fetchState}) => {
+					if (!fetchState.options.headers.authorization) {
+						fetchState.options.headers.authorization = 'Bearer sometoken'
+						return {options: fetchState.options}
+					} else return false
+				},
+			}
+		).catch(e => {
+			err = e
 		})
+
+		expect(err.message).toMatch('Timeout while making a request')
+		expect(err.fetchState.options.headers.authorization).toBe(
+			'Bearer sometoken'
+		)
 	})
 })
 
-describe.only('Validating', () => {
-	test('Validate response', async () => {
-		// let err
+describe.only('Validation', () => {
+	test('throw during validation', async () => {
+		let err
 		await makeReq(
-			{status: 200},
 			{},
 			{
-				validateResponse: async args => {
-					debugger
-					let a = await args.response.buffer()
-					let test = args.json()
+				validate: (res, fetchState) => {
+					throw new Error('Error during validation')
 				},
 			}
-		)
+		).catch(e => {
+			err = e
+		})
+
+		expect(err.message).toMatch('Error during validation')
 	})
 })

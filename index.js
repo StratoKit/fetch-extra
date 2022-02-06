@@ -1,10 +1,9 @@
 const origFetch = require('node-fetch')
 const AbortController = require('abort-controller')
-const crypto = require('crypto')
 const debug = require('debug')
 const {Sema, RateLimit} = require('async-sema')
 const dbg = debug('fetch')
-const {omit, pick} = require('lodash')
+const {omit, pick, merge} = require('lodash')
 
 const globalSema = new Sema(5)
 const globalLimiter = RateLimit(10, {uniformDistribution: true})
@@ -22,9 +21,7 @@ const responseTypes = [
 const extraOptionsFields = [
 	'retry',
 	'timeout',
-	'requestTimeout',
-	'bodyTimeout',
-	'stallTimeout',
+	'timeouts',
 	'validate',
 	'validateBuffer',
 	'validateBlob',
@@ -35,17 +32,17 @@ const extraOptionsFields = [
 ]
 
 class HttpError extends Error {
-	constructor(status, statusText, response, requestState) {
+	constructor(status, statusText, response, fetchState) {
 		const {
 			id,
 			options: {method},
 			resource,
-		} = requestState
+		} = fetchState
 		super(`HTTP error ${status} - ${statusText} (${id} ${method} ${resource})`)
 		this.status = status
 		this.statusText = statusText
 		this.response = response
-		this.requestState = requestState
+		this.fetchState = fetchState
 		Error.captureStackTrace(this, HttpError)
 	}
 }
@@ -57,19 +54,19 @@ class TimeoutError extends Error {
 		request: 'Timeout while making a request',
 	}
 
-	constructor(type, requestState) {
+	constructor(type, fetchState) {
 		const {
-			id,
+			fetchId,
 			options: {method},
 			resource,
-		} = requestState
+		} = fetchState
 
-		super(`${TimeoutError.messages[type]} (${id} ${method} ${resource})`)
+		super(`${TimeoutError.messages[type]} (${fetchId} ${method} ${resource})`)
 		this.type = type
 		this.resource = resource
 		this.method = method
-		this.requestState = requestState
-		this.headers = requestState.headers
+		this.fetchState = fetchState
+		this.headers = fetchState.options.headers
 		Error.captureStackTrace(this, TimeoutError)
 	}
 }
@@ -95,6 +92,7 @@ const fetch = async (resource, options) => {
 	const fetchStats = {}
 
 	const retry = async () => {
+		debugger
 		const attempt = fetchState.retryCount
 		if (typeof extraOptions.retry === 'number') {
 			if (attempt > 1)
@@ -104,6 +102,7 @@ const fetch = async (resource, options) => {
 				if (err) throw err
 				return false
 			}
+			return true
 		} else if (typeof extraOptions.retry === 'function') {
 			const retryResult = await extraOptions.retry({
 				error: err,
@@ -112,19 +111,19 @@ const fetch = async (resource, options) => {
 			})
 
 			if (typeof retryResult === 'object') {
-				fetchState = {
-					resource: retryResult.resource,
-					options: {
-						...retryResult.options,
-						...fetchState.options,
-					},
-					...fetchState,
-				}
+				fetchState.resource = retryResult.resource || fetchState.resource
+				merge(fetchState.options, retryResult.options)
 				return true
 			}
 			if (retryResult === true) return true
-			if (!retryResult) return false
-		} else return false
+			if (!retryResult) {
+				if (err) throw err
+				return false
+			}
+		} else {
+			if (err) throw err
+			return false
+		}
 	}
 
 	do {
@@ -133,7 +132,7 @@ const fetch = async (resource, options) => {
 		res = null
 		let controller, requestTimeout, bodyTimeout, stallTimeout
 		let timeoutReason
-		if (options.timeouts) {
+		if (options.timeouts || options.timeout) {
 			controller = new AbortController()
 			if (options.timeouts.request) {
 				requestTimeout = setTimeout(() => {
@@ -146,12 +145,12 @@ const fetch = async (resource, options) => {
 			// it means that we break the api
 			// by removing signal given by the user
 			// todo: combine signals https://github.com/whatwg/fetch/issues/905#issuecomment-491970649
-			options.signal = controller.signal
+			fetchOptions.signal = controller.signal
 		}
 
 		try {
 			if (dbg.enabled)
-				dbg(fetchState.id, options.method, fetchState.url, options)
+				dbg(fetchState.fetchId, options.method, fetchState.resource, options)
 			await sema.acquire()
 			const now = Date.now()
 			await limiter()
@@ -160,47 +159,46 @@ const fetch = async (resource, options) => {
 				if (ms > 5) dbg(`limiter waited ${ms}ms`)
 			}
 			res = await origFetch(resource, fetchOptions)
-			// TODO call validate with res without body
-			options.validate(res, fetchState)
+			if (options.validate) options.validate(res, fetchState)
 			clearTimeout(requestTimeout)
 			// if (options.throwOnBadStatus && !res.ok) {
 			// 	throw new HttpError(res.status, res.statusText, res, fetchState)
 			// }
 
 			// to put it somewhere...
-			// if (options.bodyTimeout && !bodyTimeout) {
-			// 	bodyTimeout = setTimeout(() => {
-			// 		timeoutReason = 'body'
-			// 		controller.abort()
-			// 	}, options.timeouts.body)
-			// }
+			if (options.timeouts?.body && !bodyTimeout) {
+				bodyTimeout = setTimeout(() => {
+					timeoutReason = 'body'
+					controller.abort()
+				}, options.timeouts.body)
+			}
 
 			res.body.on('resume', () => {
-				if (options.stallTimeout && !stallTimeout) {
+				if (options.timeouts?.stall && !stallTimeout) {
 					stallTimeout = setTimeout(() => {
 						timeoutReason = 'noProgress'
 						controller.abort()
-					}, options.timeouts.noProgress)
+					}, options.timeouts.stall)
 				}
 			})
 			res.body.on('data', () => {
-				if (!options.stallTimeout) return
+				if (!options.timeouts?.stall) return
 				clearTimeout(stallTimeout)
-				stallTimeout = setTimeout(() => {
+				stallTimeout = setTimeout(async () => {
 					timeoutReason = 'noProgress'
 					controller.abort()
-				}, options.timeouts.noProgress)
+				}, options.timeouts?.stall)
 			})
 			res.body.on('close', () => {
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
 			})
 
-			res.body.on('error', err => {
-				clearTimeout(bodyTimeout)
-				clearTimeout(stallTimeout)
-				throw new HttpError(res.status, res.statusText, res, fetchState)
-			})
+			// res.body.on('error', err => {
+			// 	clearTimeout(bodyTimeout)
+			// 	clearTimeout(stallTimeout)
+			// 	err = new HttpError(res.status, res.statusText, res, fetchState)
+			// })
 
 			for (const fKey of responseTypes) {
 				const prev = res[fKey]
@@ -226,10 +224,10 @@ const fetch = async (resource, options) => {
 			}
 			return res
 		} catch (e) {
+			debugger
 			if (e.type === 'aborted' && timeoutReason) {
 				err = new TimeoutError(timeoutReason, fetchState)
-			}
-			err = e
+			} else err = e
 
 			dbg(`Error during request ${fetchState.fetchId}`, err)
 		} finally {
