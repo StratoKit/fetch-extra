@@ -187,11 +187,11 @@ const fetch = async (resource, options) => {
 				clearTimeout(stallTimeout)
 			})
 
-			// res.body.on('error', err => {
-			// 	clearTimeout(bodyTimeout)
-			// 	clearTimeout(stallTimeout)
-			// 	err = new HttpError(res.status, res.statusText, res, fetchState)
-			// })
+			res.body.on('error', err => {
+				clearTimeout(bodyTimeout)
+				clearTimeout(stallTimeout)
+				err = new HttpError(res.status, res.statusText, res, fetchState)
+			})
 
 			for (const fKey of responseTypes) {
 				const prev = res[fKey]
