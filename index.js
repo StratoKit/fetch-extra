@@ -99,7 +99,6 @@ const fetch = async (resource, options) => {
 				dbg(`Request #${fetchState.fetchId} - attempt no.${attempt}...`)
 			if (attempt >= extraOptions.retry) {
 				dbg(`Aborting request #${fetchState.fetchId} - too many attempts.`)
-				if (err) throw err
 				return false
 			}
 			return true
@@ -116,14 +115,8 @@ const fetch = async (resource, options) => {
 				return true
 			}
 			if (retryResult === true) return true
-			if (!retryResult) {
-				if (err) throw err
-				return false
-			}
-		} else {
-			if (err) throw err
-			return false
-		}
+			if (!retryResult) return false
+		} else return false
 	}
 
 	do {
@@ -235,6 +228,8 @@ const fetch = async (resource, options) => {
 			await sema.release()
 		}
 	} while (await retry())
+
+	if (err) throw err
 }
 
 const makeFetch = (semaLimit, rateLimit) => {
