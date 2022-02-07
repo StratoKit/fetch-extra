@@ -3,7 +3,7 @@ const AbortController = require('abort-controller')
 const debug = require('debug')
 const {Sema, RateLimit} = require('async-sema')
 const dbg = debug('fetch')
-const {omit, pick, merge} = require('lodash')
+const {omit, pick, merge, cloneDeep} = require('lodash')
 
 const globalSema = new Sema(5)
 const globalLimiter = RateLimit(10, {uniformDistribution: true})
@@ -34,11 +34,13 @@ const extraOptionsFields = [
 class HttpError extends Error {
 	constructor(status, statusText, response, fetchState) {
 		const {
-			id,
+			fetchId,
 			options: {method},
 			resource,
 		} = fetchState
-		super(`HTTP error ${status} - ${statusText} (${id} ${method} ${resource})`)
+		super(
+			`HTTP error ${status} - ${statusText} (#${fetchId} ${method} ${resource})`
+		)
 		this.status = status
 		this.statusText = statusText
 		this.response = response
@@ -61,7 +63,7 @@ class TimeoutError extends Error {
 			resource,
 		} = fetchState
 
-		super(`${TimeoutError.messages[type]} (${fetchId} ${method} ${resource})`)
+		super(`${TimeoutError.messages[type]} (#${fetchId} ${method} ${resource})`)
 		this.type = type
 		this.resource = resource
 		this.method = method
@@ -151,17 +153,17 @@ const fetch = async (resource, options) => {
 				if (ms > 5) dbg(`limiter waited ${ms}ms`)
 			}
 			res = await origFetch(resource, fetchOptions)
-			if (options.validate) options.validate(res, fetchState)
+
+			// cloneDeep(res) - this don't work, returns empty object
+			if (options.validate)
+				options.validate(omit(res, responseTypes), fetchState)
 			clearTimeout(requestTimeout)
-			// if (options.throwOnBadStatus && !res.ok) {
-			// 	throw new HttpError(res.status, res.statusText, res, fetchState)
-			// }
 
 			// to put it somewhere...
 			if (options.timeouts?.body && !bodyTimeout) {
 				bodyTimeout = setTimeout(() => {
 					timeoutReason = 'body'
-					controller.abort()
+					controller.abort(timeoutReason)
 				}, options.timeouts.body)
 			}
 
@@ -169,7 +171,7 @@ const fetch = async (resource, options) => {
 				if (options.timeouts?.stall && !stallTimeout) {
 					stallTimeout = setTimeout(() => {
 						timeoutReason = 'noProgress'
-						controller.abort()
+						controller.abort(timeoutReason)
 					}, options.timeouts.stall)
 				}
 			})
