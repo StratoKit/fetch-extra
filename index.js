@@ -202,7 +202,7 @@ const fetch = async (resource, options) => {
 						const validator =
 							options[`validate${fKey[0].toUpperCase()}${fKey.slice(1)}`]
 						await validator?.(res, result, fetchState)
-						return result
+						return await result
 					} catch (e) {
 						if (e.type === 'aborted' && timeoutReason) {
 							throw new TimeoutError(timeoutReason, fetchState)
