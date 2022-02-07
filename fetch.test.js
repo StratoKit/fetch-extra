@@ -1,13 +1,14 @@
 const {fetch} = require('.')
 const {Readable} = require('stream')
-const {AbortSignal} = require('abort-controller')
+const AbortController = require('abort-controller')
 const delay = require('delay')
 
 jest.setTimeout(1000000)
 class TimeoutStream extends Readable {
-	constructor(size, speed, timeouts) {
+	constructor(size, speed, requestTimeout = 0, timeouts) {
 		super()
 		this.size = size
+		this.requestTimeout = requestTimeout
 		this.timeouts = [...timeouts].sort(
 			(a, b) => (a.after || 0) - (b.after || 0)
 		)
@@ -15,19 +16,31 @@ class TimeoutStream extends Readable {
 		this.speed = speed
 	}
 	async _read(chunkSize) {
+		if (this.requestTimeout) {
+			await delay(this.requestTimeout)
+			this.requestTimeout = 0
+		}
 		const toTransfer = Math.min(this.size - this._transferred, chunkSize)
 		if (this.speed) await delay((toTransfer / this.speed) * 1000)
 		if (this.timeouts.length && this.timeouts[0].after <= this._transferred) {
 			await delay(this.timeouts[0].time)
 			this.timeouts.splice(0, 1)
 		}
-
+		if (this.aborted) {
+			this.push(null)
+			return
+		}
 		this.push(Buffer.alloc(toTransfer))
 		this._transferred += toTransfer
 
 		if (this.size <= this._transferred) {
 			this.push(null)
 		}
+	}
+	destroy() {
+		this.aborted = true
+		this.push(null)
+		super.destroy()
 	}
 }
 
@@ -43,14 +56,11 @@ fastify.route({
 			bodyTimeouts = [],
 			status,
 		} = req.body
-		if (requestTimeout) {
-			await delay(requestTimeout)
-		}
 		if (status) {
 			rep.code(status)
 		}
 
-		return new TimeoutStream(size, speed, bodyTimeouts)
+		return new TimeoutStream(size, speed, requestTimeout, bodyTimeouts)
 	},
 })
 
@@ -75,13 +85,13 @@ afterAll(async () => {
 
 test('no timeout', async () => {
 	const res = await makeReq()
-	await res.buffer()
+	await expect(res.buffer()).resolves.toBeTruthy()
 })
 
 describe('request timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {request: 150}})
-		await res.buffer()
+		await expect(res.buffer()).resolves.toBeTruthy()
 	})
 	test('times out', async () => {
 		let err
@@ -90,7 +100,6 @@ describe('request timeout', () => {
 				err = e
 			}
 		)
-
 		expect(err.message).toMatch('Timeout while making a request')
 	})
 })
@@ -98,15 +107,14 @@ describe('request timeout', () => {
 describe('body timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {body: 150}})
-		await res.buffer()
+		await expect(res.buffer()).resolves.toBeTruthy()
 	})
 	test('times out (no progress)', async () => {
 		const res = await makeReq(
 			{bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {body: 150}}
 		)
-		const test = await res.buffer()
-		expect(await res.buffer()).rejects.toThrow('Timeout while fetching a body')
+		await expect(res.buffer()).rejects.toThrow('Timeout while fetching a body')
 	})
 	test('times out (slow progress)', async () => {
 		const res = await makeReq({speed: 128 * 1024}, {timeouts: {body: 150}})
@@ -117,7 +125,7 @@ describe('body timeout', () => {
 describe('no-progress timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {stall: 150}})
-		await res.buffer()
+		await expect(res.buffer()).resolves.toBeTruthy()
 	})
 	test('times out (no progress)', async () => {
 		const res = await makeReq(
@@ -133,14 +141,14 @@ describe('no-progress timeout', () => {
 			{bodyTimeouts: [{after: 500, time: 100}]},
 			{timeouts: {noProgress: 150}}
 		)
-		await res.buffer()
+		await expect(res.buffer()).resolves.toBeTruthy()
 	})
 	test('does not timeout (slow progress)', async () => {
 		const res = await makeReq(
 			{speed: 2048 * 1024},
 			{timeouts: {noProgress: 100}}
 		)
-		await res.buffer()
+		await expect(res.buffer()).resolves.toBeTruthy()
 	})
 })
 
@@ -162,7 +170,6 @@ describe('Retrying', () => {
 			{requestTimeout: 1000},
 			{
 				timeouts: {request: 150},
-				retry: 5,
 				retry: ({fetchState}) => {
 					if (!fetchState.options.headers.authorization) {
 						fetchState.options.headers.authorization = 'Bearer sometoken'
@@ -181,20 +188,42 @@ describe('Retrying', () => {
 	})
 })
 
-describe.only('Validation', () => {
-	test('throw during validation', async () => {
-		let err
-		await makeReq(
+test(`Providing custom abort signal`, async () => {
+	const controller = new AbortController()
+	try {
+		await makeReq({requestTimeout: 500}, {signal: controller.signal})
+		setTimeout(() => controller.abort(), 100)
+	} catch (e) {
+		expect(controller.aborted).toBe(true)
+		expect(e.message).toBe('User aborted a request')
+	}
+})
+
+describe('Validation', () => {
+	test.only('throw during validation', async () => {
+		await expect(
+			makeReq(
+				{},
+				{
+					validate: args => {
+						throw new Error('Error during validation')
+					},
+				}
+			)
+		).rejects.toThrow('Error during validation')
+	})
+
+	test('throw during body validation (buffer)', async () => {
+		const res = await makeReq(
 			{},
 			{
-				validate: (res, fetchState) => {
-					throw new Error('Error during validation')
+				validateBuffer: () => {
+					throw new Error('Error during validation a buffer')
 				},
 			}
-		).catch(e => {
-			err = e
-		})
-
-		expect(err.message).toMatch('Error during validation')
+		)
+		await expect(res.buffer()).rejects.toThrow(
+			'Error during validation a buffer'
+		)
 	})
 })
