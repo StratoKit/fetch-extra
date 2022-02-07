@@ -125,23 +125,22 @@ const fetch = async (resource, options) => {
 		res = null
 		let controller, requestTimeout, bodyTimeout, stallTimeout
 		let timeoutReason
-		if (options.timeouts || options.timeout) {
-			controller = new AbortController()
-			if (options.timeouts.request) {
-				requestTimeout = setTimeout(() => {
-					timeoutReason = 'request'
-					controller.abort()
-				}, options.timeouts.request)
-			}
-		}
-		if (controller) {
-			// it means that we break the api
-			// by removing signal given by the user
-			// todo: combine signals https://github.com/whatwg/fetch/issues/905#issuecomment-491970649
-			fetchOptions.signal = controller.signal
-		}
-
 		try {
+			if (options.timeouts || options.timeout || options.signal) {
+				controller = new AbortController()
+				fetchOptions.signal = controller.signal
+				if (options.signal) {
+					options.signal.addEventListener('abort', () => controller.abort(), {
+						once: true,
+					})
+				}
+				if (options.timeouts?.request) {
+					requestTimeout = setTimeout(() => {
+						timeoutReason = 'request'
+						controller.abort(timeoutReason)
+					}, options.timeouts.request)
+				}
+			}
 			if (dbg.enabled)
 				dbg(fetchState.fetchId, options.method, fetchState.resource, options)
 			await sema.acquire()
