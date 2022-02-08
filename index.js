@@ -57,6 +57,41 @@ class TimeoutError extends Error {
 	}
 }
 
+const shouldRetry = async ({fetchState, error, response}) => {
+	const attempt = fetchState.retryCount
+	const retry = fetchState.options.retry
+	if (typeof retry === 'number') {
+		if (attempt > 1)
+			dbg(`Request #${fetchState.fetchId} - attempt no.${attempt}...`)
+		if (attempt >= retry) {
+			dbg(`Aborting request #${fetchState.fetchId} - too many attempts.`)
+			return false
+		}
+		return true
+	} else if (typeof retry === 'function') {
+		const retryResult = await retry({
+			error,
+			response,
+			fetchState,
+		})
+
+		if (typeof retryResult === 'object') {
+			fetchState = {
+				...fetchState,
+				options: {
+					...fetchState.options,
+				},
+			}
+			if (typeof retryResult.options === 'object') {
+				Object.assign(fetchState.options, retryResult.options)
+			}
+			return true
+		}
+		if (retryResult === true) return true
+		if (!retryResult) return false
+	} else return false
+}
+
 const fetch = async (resource, options) => {
 	fetchId++
 
@@ -89,34 +124,9 @@ const fetch = async (resource, options) => {
 		fetchId,
 	}
 
-	const fetchStats = {}
-
-	const retry = async () => {
-		debugger
-		const attempt = fetchState.retryCount
-		if (typeof extraOptions.retry === 'number') {
-			if (attempt > 1)
-				dbg(`Request #${fetchState.fetchId} - attempt no.${attempt}...`)
-			if (attempt >= extraOptions.retry) {
-				dbg(`Aborting request #${fetchState.fetchId} - too many attempts.`)
-				return false
-			}
-			return true
-		} else if (typeof extraOptions.retry === 'function') {
-			const retryResult = await extraOptions.retry({
-				error: err,
-				response: res,
-				fetchState,
-			})
-
-			if (typeof retryResult === 'object') {
-				fetchState.resource = retryResult.resource || fetchState.resource
-				merge(fetchState.options, retryResult.options)
-				return true
-			}
-			if (retryResult === true) return true
-			if (!retryResult) return false
-		} else return false
+	const fetchStats = {
+		// bytes per seconds
+		speed: 0,
 	}
 
 	do {
@@ -226,7 +236,7 @@ const fetch = async (resource, options) => {
 			clearTimeout(requestTimeout)
 			await sema.release()
 		}
-	} while (await retry())
+	} while (await shouldRetry({fetchState, error: err, response: res}))
 
 	if (err) throw err
 }
