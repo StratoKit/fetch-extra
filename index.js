@@ -229,6 +229,7 @@ const fetch = async (resource, options) => {
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
 				resCompletedResolve(fetchStats)
+				controller.abort(timeoutReason)
 			})
 
 			for (const fKey of responseTypes) {
@@ -261,6 +262,7 @@ const fetch = async (resource, options) => {
 
 			dbg(`Error during request ${fetchState.fetchId}`, err)
 		} finally {
+			options.signal?.removeEventListener('abort')
 			clearTimeout(requestTimeout)
 			await sema.release()
 		}
