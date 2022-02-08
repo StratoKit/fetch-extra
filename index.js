@@ -15,6 +15,15 @@ const responseTypes = [
 	'textConverted',
 ]
 
+const calculateFetchStats = (stats, startTs = Date.now()) => {
+	let fetchStats = Object.assign({}, stats)
+	fetchStats.duration = (Date.now() - startTs) / 1000
+	// No infinity values
+	if (fetchStats.duration === 0) fetchStats.duration = 0.001
+	fetchStats.speed = Math.round(fetchStats.size / fetchStats.duration)
+	return fetchStats
+}
+
 class HttpError extends Error {
 	constructor(status, statusText, response, fetchState) {
 		const {
@@ -124,9 +133,13 @@ const fetch = async (resource, options) => {
 		fetchId,
 	}
 
-	const fetchStats = {
+	let fetchStats = {
 		// bytes per seconds
 		speed: 0,
+		// in seconds
+		duration: 0,
+		// in bytes
+		size: 0,
 	}
 
 	do {
@@ -179,6 +192,7 @@ const fetch = async (resource, options) => {
 				}, options.timeouts.body)
 			}
 
+			let bodyStartTs = Date.now()
 			res.body.on('resume', () => {
 				if (options.timeouts?.stall && !stallTimeout) {
 					stallTimeout = setTimeout(() => {
@@ -187,23 +201,28 @@ const fetch = async (resource, options) => {
 					}, options.timeouts.stall)
 				}
 			})
-			res.body.on('data', () => {
+			res.body.on('data', chunk => {
+				fetchStats.size += Buffer.byteLength(chunk)
 				if (!options.timeouts?.stall) return
 				clearTimeout(stallTimeout)
 				stallTimeout = setTimeout(async () => {
 					timeoutReason = 'noProgress'
-					controller.abort()
+					controller.abort(timeoutReason)
 				}, options.timeouts?.stall)
 			})
 			res.body.on('close', () => {
+				fetchStats = calculateFetchStats(fetchStats, bodyStartTs)
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
+				console.log('FETCH STATS', fetchStats)
+				resCompletedResolve(fetchStats)
 			})
 
 			res.body.on('error', err => {
+				fetchStats = calculateFetchStats(fetchStats, bodyStartTs)
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
-				err = new HttpError(res.status, res.statusText, res, fetchState)
+				resCompletedResolve(fetchStats)
 			})
 
 			for (const fKey of responseTypes) {
@@ -224,10 +243,10 @@ const fetch = async (resource, options) => {
 				}
 			}
 
-			res.completed = async () => {
-				for (fKey of responseTypes) await res[fKey]()
-				return fetchStats // empty now
-			}
+			res.completed = new Promise(resolve => {
+				resCompletedResolve = resolve
+			})
+			res.retryCount = fetchState.retryCount
 			return res
 		} catch (e) {
 			debugger
