@@ -162,9 +162,13 @@ const fetch = async (resource, options) => {
 			}
 			res = await origFetch(resource, fetchOptions)
 
-			// cloneDeep(res) - this don't work, returns empty object
-			if (options.validate)
-				options.validate(omit(res, responseTypes), fetchState)
+			if (options.validate) {
+				resBody = res.body
+				res.body = undefined
+				options.validate(res, fetchState)
+				res.body = resBody
+			}
+
 			clearTimeout(requestTimeout)
 
 			// to put it somewhere...
