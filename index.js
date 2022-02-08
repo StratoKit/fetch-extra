@@ -4,8 +4,6 @@ const debug = require('debug')
 const {Sema, RateLimit} = require('async-sema')
 const dbg = debug('fetch')
 
-const globalSema = new Sema(5)
-const globalLimiter = RateLimit(10, {uniformDistribution: true})
 let fetchId = 0
 
 const responseTypes = [
@@ -61,11 +59,6 @@ class TimeoutError extends Error {
 
 const fetch = async (resource, options) => {
 	fetchId++
-	let err, res, sema, limiter
-	if (!this.sema) sema = globalSema
-	else sema = this.sema
-	if (!this.limiter) limiter = globalLimiter
-	else limiter = this.limiter
 
 	let {
 		retry,
@@ -82,6 +75,12 @@ const fetch = async (resource, options) => {
 		limiter,
 		...fetchOptions
 	} = options
+
+	let err, res, resCompletedResolve
+	// Should we require sema in options or not? new Sema(5) will create new instance on every fetch
+	// which can be misguided with limiting number of requests, and can be truly used only while retrying
+	if (!sema) sema = new Sema(5)
+	if (!limiter) limiter = RateLimit(10, {uniformDistribution: true})
 
 	const fetchState = {
 		resource,
@@ -236,7 +235,12 @@ const makeFetch = (semaLimit, rateLimit) => {
 	const sema = new Sema(semaLimit)
 	const limiter = RateLimit(rateLimit, {uniformDistribution: true})
 
-	return fetch.bind({sema, limiter})
+	return (resource, options) =>
+		fetch(resource, {
+			...options,
+			sema,
+			limiter,
+		})
 }
 
 module.exports = {
