@@ -199,8 +199,9 @@ test(`Providing custom abort signal`, async () => {
 	}
 })
 
+// This suite is passing, but test is hanging and never quits
 describe('Validation', () => {
-	test.only('throw during validation', async () => {
+	test('throw during validation', async () => {
 		await expect(
 			makeReq(
 				{},
