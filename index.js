@@ -3,7 +3,6 @@ const AbortController = require('abort-controller')
 const debug = require('debug')
 const {Sema, RateLimit} = require('async-sema')
 const dbg = debug('fetch')
-const {omit, pick, merge, cloneDeep} = require('lodash')
 
 const globalSema = new Sema(5)
 const globalLimiter = RateLimit(10, {uniformDistribution: true})
@@ -16,19 +15,6 @@ const responseTypes = [
 	'json',
 	'text',
 	'textConverted',
-]
-
-const extraOptionsFields = [
-	'retry',
-	'timeout',
-	'timeouts',
-	'validate',
-	'validateBuffer',
-	'validateBlob',
-	'validateArrayBuffer',
-	'validateJson',
-	'validateText',
-	'validateTextConverted',
 ]
 
 class HttpError extends Error {
@@ -81,8 +67,21 @@ const fetch = async (resource, options) => {
 	if (!this.limiter) limiter = globalLimiter
 	else limiter = this.limiter
 
-	const fetchOptions = omit(options, extraOptionsFields)
-	const extraOptions = pick(options, extraOptionsFields)
+	let {
+		retry,
+		timeout,
+		timeouts,
+		validate,
+		validateBuffer,
+		validateBlob,
+		validateArrayBuffer,
+		validateJson,
+		validateText,
+		validateTextConverted,
+		sema,
+		limiter,
+		...fetchOptions
+	} = options
 
 	const fetchState = {
 		resource,
