@@ -153,9 +153,15 @@ const fetch = async (resource, options) => {
 				controller = new AbortController()
 				fetchOptions.signal = controller.signal
 				if (options.signal) {
-					options.signal.addEventListener('abort', () => controller.abort(), {
-						once: true,
-					})
+					options.signal.addEventListener(
+						'abort',
+						() => {
+							controller.abort()
+						},
+						{
+							once: true,
+						}
+					)
 				}
 				if (options.timeouts?.request) {
 					requestTimeout = setTimeout(() => {
@@ -249,7 +255,6 @@ const fetch = async (resource, options) => {
 			res.retryCount = fetchState.retryCount
 			return res
 		} catch (e) {
-			debugger
 			if (e.type === 'aborted' && timeoutReason) {
 				err = new TimeoutError(timeoutReason, fetchState)
 			} else err = e
