@@ -5,8 +5,6 @@ const {Sema, RateLimit} = require('async-sema')
 const dbg = debug('fetch')
 
 let fetchId = 0
-const defaultSema = new Sema(15)
-const defaultLimiter = RateLimit(15, {uniformDistribution: true})
 
 const responseTypes = [
 	'buffer',
@@ -16,15 +14,6 @@ const responseTypes = [
 	'text',
 	'textConverted',
 ]
-
-const calculateFetchStats = (stats, startTs = Date.now()) => {
-	let fetchStats = Object.assign({}, stats)
-	fetchStats.duration = (Date.now() - startTs) / 1000
-	// No infinity values
-	if (fetchStats.duration === 0) fetchStats.duration = 0.001
-	fetchStats.speed = Math.round(fetchStats.size / fetchStats.duration)
-	return fetchStats
-}
 
 class HttpError extends Error {
 	constructor(status, statusText, response, fetchState) {
@@ -68,42 +57,7 @@ class TimeoutError extends Error {
 	}
 }
 
-const shouldRetry = async ({fetchState, error, response}) => {
-	const attempt = fetchState.retryCount
-	const retry = fetchState.options.retry
-	if (typeof retry === 'number') {
-		if (attempt > 1)
-			dbg(`Request #${fetchState.fetchId} - attempt no.${attempt}...`)
-		if (attempt >= retry) {
-			dbg(`Aborting request #${fetchState.fetchId} - too many attempts.`)
-			return false
-		}
-		return true
-	} else if (typeof retry === 'function') {
-		const retryResult = await retry({
-			error,
-			response,
-			fetchState,
-		})
-
-		if (typeof retryResult === 'object') {
-			fetchState = {
-				...fetchState,
-				options: {
-					...fetchState.options,
-				},
-			}
-			if (typeof retryResult.options === 'object') {
-				Object.assign(fetchState.options, retryResult.options)
-			}
-			return true
-		}
-		if (retryResult === true) return true
-		if (!retryResult) return false
-	} else return false
-}
-
-async function fetch(resource, options) {
+async function fetch(resource, options, fetchState) {
 	fetchId++
 
 	let {
@@ -117,128 +71,181 @@ async function fetch(resource, options) {
 		validateJson,
 		validateText,
 		validateTextConverted,
+		signal,
 		sema,
 		limiter,
 		...fetchOptions
 	} = options
 
-	let err, res, resCompletedResolve
+	let err, res
 	// Should we require sema in options or not? new Sema(5) will create new instance on every fetch
 	// which can be misguided with limiting number of requests, and can be truly used only while retrying
-	if (!sema) sema = defaultSema
-	if (!limiter) limiter = defaultLimiter
+	// if (!sema) sema = new Sema(5)
+	// if (!limiter) limiter = RateLimit(10, {uniformDistribution: true})
 
-	if (!this.fetchState) {
-		this.fetchState = {
+	if (!fetchState) {
+		fetchState = {
 			resource,
-			options,
+			options: fetchOptions,
 			retryCount: 0,
+			resCompletedResolve: null,
 			fetchId,
+			retry,
 		}
 	}
 
-	let fetchStats = {
-		// bytes per seconds
-		speed: 0,
-		// in seconds
-		duration: 0,
-		// in bytes
-		size: 0,
-		error: err,
-		ok: res?.ok,
+	const calculateFetchStats = (startTs = Date.now()) => {
+		fetchStats.duration = (Date.now() - startTs) / 1000
+		fetchStats.speed = fetchStats.size
+			? Math.round(fetchStats.size / fetchStats.duration)
+			: 0
+		fetchStats.error = err
+		fetchStats.ok = res?.ok
+		fetchState.resCompletedResolve?.(fetchStats)
 	}
 
+	const shouldRetry = async () => {
+		const attempt = fetchState.retryCount
+		const retry = fetchState.retry
+		if (typeof retry === 'number') {
+			if (attempt > 1)
+				dbg(`Request #${fetchState.fetchId} - attempt no.${attempt}...`)
+			if (attempt >= retry) {
+				dbg(`Aborting request #${fetchState.fetchId} - too many attempts.`)
+				return false
+			}
+			return true
+		} else if (typeof retry === 'function') {
+			try {
+				const retryResult = await retry({
+					error: err,
+					response: res,
+					fetchState: fetchState,
+				})
+
+				if (typeof retryResult === 'object') {
+					fetchState = {
+						...fetchState,
+						options: {
+							...fetchState.options,
+						},
+					}
+					if (typeof retryResult.options === 'object') {
+						Object.assign(fetchState.options, retryResult.options)
+					}
+					return true
+				}
+				if (retryResult === true) return true
+				if (!retryResult) return false
+			} catch (e) {
+				err = e
+			}
+		} else return false
+	}
+
+	let fetchStats = {}
 	do {
-		this.fetchState.retryCount++
+		fetchState.retryCount++
+		fetchStats = {
+			// bytes per seconds
+			speed: 0,
+			// in seconds
+			duration: 0,
+			// in bytes
+			size: 0,
+			error: err,
+			ok: null,
+			attempts: fetchState.retryCount,
+		}
+
 		err = null
 		res = null
 		let controller, requestTimeout, bodyTimeout, stallTimeout
 		let timeoutReason
 		try {
-			if (options.timeouts || options.timeout || options.signal) {
+			if (timeouts || timeout || signal) {
 				controller = new AbortController()
 				fetchOptions.signal = controller.signal
-				if (options.signal) {
-					options.signal.addEventListener(
+				if (signal) {
+					if (signal.aborted)
+						throw new Error('Providen signal is already aborted')
+					signal.addEventListener(
 						'abort',
 						() => {
 							controller.abort()
 						},
-						{
-							once: true,
-						}
+						{once: true}
 					)
 				}
-				if (options.timeouts?.request) {
+				if (timeouts?.request) {
 					requestTimeout = setTimeout(() => {
 						timeoutReason = 'request'
 						controller.abort(timeoutReason)
-					}, options.timeouts.request)
+					}, timeouts.request)
 				}
 			}
 			if (dbg.enabled)
 				dbg(
-					this.fetchState.fetchId,
-					options.method,
-					this.fetchState.resource,
+					fetchState.fetchId,
+					fetchOptions.method,
+					fetchState.resource,
 					options
 				)
-			await sema.acquire()
-			const now = Date.now()
-			await limiter()
+			const now = performance.now()
+			await limiter?.()
 			if (dbg.enabled) {
-				const ms = Date.now() - now
+				const ms = performance.now() - now
 				if (ms > 5) dbg(`limiter waited ${ms}ms`)
 			}
 			res = await origFetch(resource, fetchOptions)
 
-			if (options.validate) {
+			if (validate) {
 				resBody = res.body
 				res.body = undefined
-				options.validate(res, this.fetchState)
+				validate(res, fetchState)
 				res.body = resBody
 			}
 
 			clearTimeout(requestTimeout)
 
 			// to put it somewhere...
-			if (options.timeouts?.body && !bodyTimeout) {
+			if (timeouts?.body && !bodyTimeout) {
 				bodyTimeout = setTimeout(() => {
 					timeoutReason = 'body'
 					controller.abort(timeoutReason)
-				}, options.timeouts.body)
+				}, timeouts.body)
 			}
 
-			let bodyStartTs = Date.now()
+			let bodyStartTs = performance.now()
 			res.body.on('resume', () => {
-				if (options.timeouts?.stall && !stallTimeout) {
+				if (timeouts?.stall && !stallTimeout) {
 					stallTimeout = setTimeout(() => {
 						timeoutReason = 'noProgress'
 						controller.abort(timeoutReason)
-					}, options.timeouts.stall)
+					}, timeouts.stall)
 				}
 			})
+
+			const stall = timeouts?.stall
 			res.body.on('data', chunk => {
 				fetchStats.size += Buffer.byteLength(chunk)
-				if (!options.timeouts?.stall) return
+				if (!stall) return
 				clearTimeout(stallTimeout)
 				stallTimeout = setTimeout(async () => {
 					timeoutReason = 'noProgress'
 					controller.abort(timeoutReason)
-				}, options.timeouts?.stall)
+				}, stall)
 			})
 			res.body.on('close', () => {
-				fetchStats = calculateFetchStats(fetchStats, bodyStartTs)
+				calculateFetchStats(bodyStartTs)
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
-				resCompletedResolve(fetchStats)
 			})
 
 			res.body.on('error', err => {
-				fetchStats = calculateFetchStats(fetchStats, bodyStartTs)
+				calculateFetchStats(bodyStartTs)
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
-				resCompletedResolve(fetchStats)
 				controller.abort(timeoutReason)
 			})
 
@@ -249,65 +256,73 @@ async function fetch(resource, options) {
 						const result = prev.call(res, args)
 						const validator =
 							options[`validate${fKey[0].toUpperCase()}${fKey.slice(1)}`]
-						await validator?.(res, result, this.fetchState)
+						await validator?.(res, result, fetchState)
 						return await result
 					} catch (e) {
+						fetchState.resCompletedResolve?.(fetchStats)
 						if (e.type === 'aborted' && timeoutReason) {
-							throw new TimeoutError(timeoutReason, this.fetchState)
+							throw new TimeoutError(timeoutReason, fetchState)
 						}
+
 						if (
-							shouldRetry({
-								fetchState: this.fetchState,
+							await shouldRetry({
+								fetchState: fetchState,
 								error: err,
 								response: res,
 							})
 						) {
-							return await fetch.call(
-								{fetchState: this.fetchState},
-								resource,
-								this.fetchState.options
-							)
+							return await fetch(resource, fetchState.options, fetchState)
+						} else {
+							throw e
 						}
 					}
 				}
 			}
 
-			res.completed = new Promise(resolve => {
-				resCompletedResolve = resolve
-			})
-			res.retryCount = this.fetchState.retryCount
+			res.completed = () =>
+				new Promise(resolve => {
+					fetchState.resCompletedResolve = resolve
+				})
+			res.retryCount = fetchState.retryCount
 			return res
 		} catch (e) {
 			if (e.type === 'aborted' && timeoutReason) {
-				err = new TimeoutError(timeoutReason, this.fetchState)
+				err = new TimeoutError(timeoutReason, fetchState)
 			} else err = e
 
-			dbg(`Error during request ${this.fetchState.fetchId}`, err)
+			dbg(`Error during request #${fetchState.fetchId}`, err)
 		} finally {
-			options.signal?.removeEventListener('abort')
+			signal?.removeEventListener('abort')
 			clearTimeout(requestTimeout)
-			await sema.release()
 		}
-	} while (
-		await shouldRetry({fetchState: this.fetchState, error: err, response: res})
-	)
+	} while (await shouldRetry())
 
 	if (err) throw err
+	dbg(`Request #${fetchId} finished.`)
 }
 
-const makeFetch = (semaLimit, rateLimit) => {
-	const sema = new Sema(semaLimit)
-	const limiter = RateLimit(rateLimit, {uniformDistribution: true})
+const makeFetch = (maxParallel, maxRps) => {
+	const sema = new Sema(maxParallel)
+	const limiter = RateLimit(maxRps, {uniformDistribution: true})
 
-	return (resource, options) =>
-		fetch(resource, {
-			...options,
-			sema,
-			limiter,
-		})
+	return async (resource, options) => {
+		await sema.acquire()
+		let res
+		try {
+			res = await fetch(resource, {
+				...options,
+				sema,
+				limiter,
+			})
+			res.stats = await res.completed()
+		} catch (e) {
+			throw e
+		} finally {
+			await sema.release()
+		}
+		return res
+	}
 }
 
-module.exports = {
-	fetch,
-	makeFetch,
-}
+module.exports = fetch
+exports.makeFetch = makeFetch

@@ -1,4 +1,4 @@
-const {fetch} = require('.')
+const fetch = require('.')
 const {Readable} = require('stream')
 const AbortController = require('abort-controller')
 const delay = require('delay')
@@ -83,12 +83,12 @@ afterAll(async () => {
 	await fastify.close()
 })
 
-test('no timeout', async () => {
+test.only('no timeout', async () => {
 	const res = await makeReq()
 	await expect(res.buffer()).resolves.toBeTruthy()
 })
 
-describe('request timeout', () => {
+describe.only('request timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {request: 150}})
 		await expect(res.buffer()).resolves.toBeTruthy()
@@ -104,7 +104,7 @@ describe('request timeout', () => {
 	})
 })
 
-describe('body timeout', () => {
+describe.only('body timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {body: 150}})
 		await expect(res.buffer()).resolves.toBeTruthy()
@@ -122,7 +122,7 @@ describe('body timeout', () => {
 	})
 })
 
-describe('no-progress timeout', () => {
+describe.only('no-progress timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {stall: 150}})
 		await expect(res.buffer()).resolves.toBeTruthy()
@@ -154,46 +154,48 @@ describe('no-progress timeout', () => {
 
 describe.only('Retrying', () => {
 	test('Retry 5 times', async () => {
-		await makeReq(
-			{requestTimeout: 1000},
-			{timeouts: {request: 150}, retry: 5}
-		).catch(e => {
-			err = e
-		})
-
-		expect(err.message).toMatch('Timeout while making a request')
-		expect(err.fetchState.retryCount).toBe(5)
+		expect.assertions(2)
+		try {
+			await makeReq(
+				{requestTimeout: 1000},
+				{timeouts: {request: 150}, retry: 5}
+			)
+		} catch (e) {
+			expect(e.fetchState.retryCount).toBe(5)
+			expect(e.message).toMatch('Timeout while making a request')
+		}
 	})
 
 	test('Add authorization header on retry', async () => {
-		await makeReq(
-			{requestTimeout: 1000},
-			{
-				timeouts: {request: 150},
-				retry: ({fetchState}) => {
-					if (!fetchState.options.headers.authorization) {
-						return {
-							options: {
-								headers: {
-									authorization: 'Bearer sometoken',
+		expect.assertions(2)
+		try {
+			await makeReq(
+				{requestTimeout: 1000},
+				{
+					timeouts: {request: 150},
+					retry: async ({fetchState}) => {
+						if (!fetchState.options.headers.authorization) {
+							return {
+								options: {
+									headers: {
+										authorization: 'Bearer sometoken',
+									},
 								},
-							},
-						}
-					} else return false
-				},
-			}
-		).catch(e => {
-			err = e
-		})
-		console.log(err.fetchState)
-		expect(err.message).toMatch('Timeout while making a request')
-		expect(err.fetchState.options.headers.authorization).toBe(
-			'Bearer sometoken'
-		)
+							}
+						} else return false
+					},
+				}
+			)
+		} catch (e) {
+			expect(e.message).toMatch('Timeout while making a request')
+			expect(e.fetchState.options.headers.authorization).toBe(
+				'Bearer sometoken'
+			)
+		}
 	})
 })
 
-test(`Providing custom abort signal`, async () => {
+test.only(`Providing custom abort signal`, async () => {
 	const controller = new AbortController()
 	try {
 		await makeReq({requestTimeout: 500}, {signal: controller.signal})
@@ -205,31 +207,61 @@ test(`Providing custom abort signal`, async () => {
 })
 
 // This suite is passing, but test is hanging and never quits
-describe.skip('Validation', () => {
-	test('throw during validation', async () => {
-		await expect(
-			makeReq(
+describe('Validation', () => {
+	test.only('throw during validation', async () => {
+		let good = false
+		expect.assertions(1)
+		try {
+			await makeReq(
 				{},
 				{
 					validate: args => {
-						throw new Error('Error during validation')
+						console.log('Good - ' + good)
+						if (!good) {
+							good = true
+							throw new Error('Error during validation')
+						}
 					},
+					retry: 1,
 				}
 			)
-		).rejects.toThrow('Error during validation')
+		} catch (e) {
+			expect(e.message).toBe('Error during validation')
+		}
 	})
 
 	test('throw during body validation (buffer)', async () => {
+		expect.assertions(1)
+		try {
+			const res = await makeReq(
+				{},
+				{
+					validateBuffer: () => {
+						throw new Error('Error during validation a buffer')
+					},
+				}
+			)
+			await res.buffer()
+		} catch (e) {
+			expect(e.message).toMatch('Error during validation a buffer')
+		}
+	})
+
+	test.skip('throw during body validation (buffer) and retry', async () => {
+		// expect.assertions(2)
 		const res = await makeReq(
 			{},
 			{
 				validateBuffer: () => {
-					throw new Error('Error during validation a buffer')
+					if (!good) {
+						good = true
+						throw new Error('Error during validation a buffer')
+					}
 				},
+				retry: 5,
 			}
 		)
-		await expect(res.buffer()).rejects.toThrow(
-			'Error during validation a buffer'
-		)
+		await expect(res.buffer()).not.toThrow('Error during validation a buffer')
+		expect(res.retryCount).toBe(2)
 	})
 })
