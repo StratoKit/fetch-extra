@@ -15,7 +15,7 @@ The goal is to add some extra functionality to node-fetch in a non-intrusive way
       - throwing = don't retry, fetch will throw what you've thrown
   - `validate: true | (response: Omit<Response, "body">, state: FetchState) => Promise<void>`: throws allows to retry the request (with no body consumed yet!) on particular circumstances
     - if `true`, then `validate: res => if (!res.ok ) throw HttpError`
-  - `validateJson`, `validateBuffer`, `validateBlob`, `validateText`, `validateTextConverted` - same rule as `validate`, but with access to the parsed body `(response: Response, result: any, state: FetchState)`
+  - `validate.json`, `validate.buffer`, etc - same rule as `validate`, but with access to the parsed body `(result: any, state: FetchState)`
   - `timeout: number`: default value for all the request handling (doing the request + fetching the body); same as in node-fetch v2
   - `requestTimeout` = timeout for `await fetch(...)` (includes body upload time)
   - `bodyTimeout` = timeout for fetching the whole body, i.e. `await res.json()`
@@ -23,7 +23,7 @@ The goal is to add some extra functionality to node-fetch in a non-intrusive way
 - todo: abort controller we use for timeout handling shouldn't ignore abort controller given in the options (already put the comment in the code)
 - todo: `noProgress` but for file upload (request)?
 - Extra Response fields:
-  - `completed: Promise<FetchStats>`: After body download finished or cancelled, always resolves
+  - `completed: Promise<FetchStats>`: Promise for body completion - rejects if fetch body or validation failed
 - `makeFetch` with built-in async-sema options like Sema and RateLimit
 - rich logging: ?
   - request start (include the body if it's string)

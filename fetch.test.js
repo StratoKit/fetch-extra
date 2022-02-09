@@ -37,10 +37,9 @@ class TimeoutStream extends Readable {
 			this.push(null)
 		}
 	}
-	destroy() {
+	_destroy() {
 		this.aborted = true
 		this.push(null)
-		super.destroy()
 	}
 }
 
@@ -65,6 +64,16 @@ fastify.route({
 })
 
 let port
+/**
+ * @param {{
+ * 	requestTimeout?: number
+ * 	size?: number
+ * 	speed?: number
+ * 	bodyTimeouts?: {time: number; after: number}[]
+ * 	status?: number
+ * }} [reqOptions]
+ * @param {import('.').ExtendedOptions} [options]
+ */
 const makeReq = async (reqOptions, options) => {
 	return await fetch(`http://localhost:${port}`, {
 		method: 'POST',
@@ -83,12 +92,12 @@ afterAll(async () => {
 	await fastify.close()
 })
 
-test.only('no timeout', async () => {
+test('no timeout', async () => {
 	const res = await makeReq()
 	await expect(res.buffer()).resolves.toBeTruthy()
 })
 
-describe.only('request timeout', () => {
+describe('request timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {request: 150}})
 		await expect(res.buffer()).resolves.toBeTruthy()
@@ -100,59 +109,61 @@ describe.only('request timeout', () => {
 				err = e
 			}
 		)
-		expect(err.message).toMatch('Timeout while making a request')
+		expect(err.message).toMatch('Timeout: request')
 	})
 })
 
-describe.only('body timeout', () => {
+describe('body timeout', () => {
 	test('makes it on time', async () => {
-		const res = await makeReq({}, {timeouts: {body: 150}})
-		await expect(res.buffer()).resolves.toBeTruthy()
+		const resP = makeReq({}, {timeouts: {body: 150}})
+		await expect(resP).resolves.toBeDefined()
+		await expect((await resP).buffer()).resolves.toBeTruthy()
 	})
 	test('times out (no progress)', async () => {
-		const res = await makeReq(
+		const resP = makeReq(
 			{bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {body: 150}}
 		)
-		await expect(res.buffer()).rejects.toThrow('Timeout while fetching a body')
+		await expect(resP).resolves.toBeDefined()
+		await expect((await resP).buffer()).rejects.toThrow('Timeout: body')
 	})
 	test('times out (slow progress)', async () => {
-		const res = await makeReq({speed: 128 * 1024}, {timeouts: {body: 150}})
-		await expect(res.buffer()).rejects.toThrow('Timeout while fetching a body')
+		const resP = makeReq({speed: 128 * 1024}, {timeouts: {body: 150}})
+		await expect(resP).resolves.toBeDefined()
+		await expect((await resP).buffer()).rejects.toThrow('Timeout: body')
+		console.log('look at me (proof that test succeeeds)')
 	})
 })
 
-describe.only('no-progress timeout', () => {
+describe('no-progress timeout', () => {
 	test('makes it on time', async () => {
-		const res = await makeReq({}, {timeouts: {stall: 150}})
-		await expect(res.buffer()).resolves.toBeTruthy()
+		const resP = makeReq({}, {timeouts: {stall: 250}})
+		await expect(resP).resolves.toBeDefined()
+		await expect((await resP).buffer()).resolves.toBeTruthy()
 	})
 	test('times out (no progress)', async () => {
-		const res = await makeReq(
+		const resP = makeReq(
 			{bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {stall: 150}}
 		)
-		await expect(res.buffer()).rejects.toThrow(
-			'Timeout - no progress while fetching a body'
-		)
+		await expect(resP).resolves.toBeDefined()
+		await expect((await resP).buffer()).rejects.toThrow('Timeout: stall')
 	})
 	test('does not timeout (no progress but for short term)', async () => {
-		const res = await makeReq(
-			{bodyTimeouts: [{after: 500, time: 100}]},
-			{timeouts: {noProgress: 150}}
+		const resP = makeReq(
+			{bodyTimeouts: [{after: 500, time: 50}]},
+			{timeouts: {stall: 250}}
 		)
-		await expect(res.buffer()).resolves.toBeTruthy()
+		await expect(resP).resolves.toBeDefined()
+		await expect((await resP).buffer()).resolves.toBeTruthy()
 	})
 	test('does not timeout (slow progress)', async () => {
-		const res = await makeReq(
-			{speed: 2048 * 1024},
-			{timeouts: {noProgress: 100}}
-		)
+		const res = await makeReq({speed: 2048 * 1024}, {timeouts: {stall: 100}})
 		await expect(res.buffer()).resolves.toBeTruthy()
 	})
 })
 
-describe.only('Retrying', () => {
+describe('Retrying', () => {
 	test('Retry 5 times', async () => {
 		expect.assertions(2)
 		try {
@@ -161,41 +172,36 @@ describe.only('Retrying', () => {
 				{timeouts: {request: 150}, retry: 5}
 			)
 		} catch (e) {
-			expect(e.fetchState.retryCount).toBe(5)
-			expect(e.message).toMatch('Timeout while making a request')
+			expect(e.state.attempt).toBe(5)
+			expect(e.message).toMatch('Timeout: request')
 		}
 	})
 
 	test('Add authorization header on retry', async () => {
-		expect.assertions(2)
-		try {
-			await makeReq(
-				{requestTimeout: 1000},
-				{
-					timeouts: {request: 150},
-					retry: async ({fetchState}) => {
-						if (!fetchState.options.headers.authorization) {
-							return {
-								options: {
-									headers: {
-										authorization: 'Bearer sometoken',
-									},
+		expect.assertions(1)
+		const res = await makeReq(
+			{requestTimeout: 1000},
+			{
+				timeouts: {request: 150},
+				retry: async ({state}) => {
+					if (state.attempt > 2) return false
+					if (!state.options.headers?.authorization) {
+						return {
+							options: {
+								headers: {
+									authorization: 'Bearer sometoken',
 								},
-							}
-						} else return false
-					},
-				}
-			)
-		} catch (e) {
-			expect(e.message).toMatch('Timeout while making a request')
-			expect(e.fetchState.options.headers.authorization).toBe(
-				'Bearer sometoken'
-			)
-		}
+							},
+						}
+					} else return false
+				},
+			}
+		)
+		await expect(res.completed).resolves.toBeDefined()
 	})
 })
 
-test.only(`Providing custom abort signal`, async () => {
+test(`Providing custom abort signal`, async () => {
 	const controller = new AbortController()
 	try {
 		await makeReq({requestTimeout: 500}, {signal: controller.signal})
@@ -208,7 +214,7 @@ test.only(`Providing custom abort signal`, async () => {
 
 // This suite is passing, but test is hanging and never quits
 describe('Validation', () => {
-	test.only('throw during validation', async () => {
+	test('throw during validation', async () => {
 		let good = false
 		expect.assertions(1)
 		try {
@@ -236,32 +242,37 @@ describe('Validation', () => {
 			const res = await makeReq(
 				{},
 				{
-					validateBuffer: () => {
-						throw new Error('Error during validation a buffer')
+					validate: {
+						buffer: () => {
+							throw new Error('Error during validation a buffer')
+						},
 					},
 				}
 			)
-			await res.buffer()
+			await expect(res.buffer()).resolves.toBeInstanceOf(Buffer)
 		} catch (e) {
 			expect(e.message).toMatch('Error during validation a buffer')
 		}
 	})
 
-	test.skip('throw during body validation (buffer) and retry', async () => {
-		// expect.assertions(2)
+	test('throw during body validation (buffer) and retry', async () => {
+		let good = false
+		expect.assertions(2)
 		const res = await makeReq(
 			{},
 			{
-				validateBuffer: () => {
-					if (!good) {
-						good = true
-						throw new Error('Error during validation a buffer')
-					}
+				validate: {
+					buffer: () => {
+						if (!good) {
+							good = true
+							throw new Error('Error during validation a buffer')
+						}
+					},
 				},
 				retry: 5,
 			}
 		)
-		await expect(res.buffer()).not.toThrow('Error during validation a buffer')
-		expect(res.retryCount).toBe(2)
+		await expect(res.buffer()).resolves.toBeInstanceOf(Buffer)
+		await expect(res.completed).resolves.toHaveProperty('attempts', 2)
 	})
 })
