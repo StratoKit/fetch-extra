@@ -35,6 +35,7 @@ class HttpError extends Error {
 
 class TimeoutError extends Error {
 	static messages = {
+		overall: 'Timeout while handling a request',
 		noProgress: 'Timeout - no progress while fetching a body',
 		body: 'Timeout while fetching a body',
 		request: 'Timeout while making a request',
@@ -160,9 +161,13 @@ async function fetch(resource, options, fetchState) {
 
 		err = null
 		res = null
-		let controller, requestTimeout, bodyTimeout, stallTimeout
+		let controller, requestTimeout, bodyTimeout, stallTimeout, overallTimeout
 		let timeoutReason
 		try {
+			if (timeout && timeouts.length)
+				throw new Error(
+					'Specify general timeout in timeout option or divide timeouts in timeouts, not both at once'
+				)
 			if (timeouts || timeout || signal) {
 				controller = new AbortController()
 				fetchOptions.signal = controller.signal
@@ -208,12 +213,10 @@ async function fetch(resource, options, fetchState) {
 
 			clearTimeout(requestTimeout)
 
-			// to put it somewhere...
-			if (timeouts?.body && !bodyTimeout) {
-				bodyTimeout = setTimeout(() => {
-					timeoutReason = 'body'
-					controller.abort(timeoutReason)
-				}, timeouts.body)
+			if (timeout) {
+				overallTimeout = setTimeout(() => {
+					timeoutReason = 'overall'
+				}, timeout)
 			}
 
 			let bodyStartTs = performance.now()
@@ -253,10 +256,18 @@ async function fetch(resource, options, fetchState) {
 				const prev = res[fKey]
 				res[fKey] = async (...args) => {
 					try {
+						if (timeouts?.body && !bodyTimeout) {
+							bodyTimeout = setTimeout(() => {
+								timeoutReason = 'body'
+								// throw in async don't work in outer try...catch
+								err = new TimeoutError(timeoutReason, fetchState)
+							}, timeouts.body)
+						}
 						const result = prev.call(res, args)
 						const validator =
 							options[`validate${fKey[0].toUpperCase()}${fKey.slice(1)}`]
 						await validator?.(res, result, fetchState)
+						if (err?.type === 'body') throw err
 						return await result
 					} catch (e) {
 						fetchState.resCompletedResolve?.(fetchStats)
@@ -275,6 +286,8 @@ async function fetch(resource, options, fetchState) {
 						} else {
 							throw e
 						}
+					} finally {
+						clearTimeout(bodyTimeout)
 					}
 				}
 			}
@@ -284,7 +297,6 @@ async function fetch(resource, options, fetchState) {
 					fetchState.resCompletedResolve = resolve
 				})
 			res.retryCount = fetchState.retryCount
-			return res
 		} catch (e) {
 			if (e.type === 'aborted' && timeoutReason) {
 				err = new TimeoutError(timeoutReason, fetchState)
@@ -299,6 +311,7 @@ async function fetch(resource, options, fetchState) {
 
 	if (err) throw err
 	dbg(`Request #${fetchId} finished.`)
+	return res
 }
 
 const makeFetch = (maxParallel, maxRps) => {
