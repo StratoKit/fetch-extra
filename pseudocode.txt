@@ -1,0 +1,86 @@
+run fetch function
+
+pick extraOptions from options, rest is for origFetch
+init fetch state if not providen in 3rd argument
+
+-- enter fetch loop
+    --- enter try...catch
+        `check if custom signal providen
+            if yes
+                if aborted?
+                    abort request
+                else
+                    listen to abort, if triggered abort inner signal as well
+            
+        if request timeout provided
+            start timeout
+                abort request if exceeded
+
+        get response from original fetch
+        validate not consumed response
+
+        stop request timeout
+
+        fetch the body (stream)
+            - on every data chunk
+                update size stats
+                start stall timeout if provided
+            - on close
+                clear stall timeout
+                resolve fetch stats
+            - on error
+                clear stall timeout
+                resolve fetch stats
+                abort request
+
+|        wrap body consume response functions (outer try..catch have no power here) 
+|            try... 
+|                start body timeout if provided
+|                    throw timeout error if exceeded, that will mean to retry the request
+|                fetch the body
+|                validate the body
+|                return consumed body
+|            catch...
+|                if something aborted request in this time
+|                    throw timeout error
+|                ...shouldRetry?
+|                    return new fetch request with fetchState from this request
+|            finally...
+|                stop body timeout
+    on errors or abort
+        fill global error variable
+            with timeout error if aborted
+            with catched error otherwise
+    finally
+        stop request timeout
+shouldretry?
+    yes
+        go to start of fetch loop
+    no
+
+if global error variable is filled
+    throw it
+else
+    exit fetch loop
+    return response
+
+### helper functions
+...shouldRetry <boolean> (true - retry, false - stop)
+    check retry option
+        number?
+            is >= than number of already done attempts?
+                false
+            else
+                true
+        function?
+            execute it
+                if thrown error?
+                    fill global error variable
+                    false
+                else
+                    check result
+                        object?
+                            merge it with fetchState
+                            true
+        false
+    resolve resCompleted

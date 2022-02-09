@@ -79,10 +79,6 @@ async function fetch(resource, options, fetchState) {
 	} = options
 
 	let err, res
-	// Should we require sema in options or not? new Sema(5) will create new instance on every fetch
-	// which can be misguided with limiting number of requests, and can be truly used only while retrying
-	// if (!sema) sema = new Sema(5)
-	// if (!limiter) limiter = RateLimit(10, {uniformDistribution: true})
 
 	if (!fetchState) {
 		fetchState = {
@@ -95,8 +91,8 @@ async function fetch(resource, options, fetchState) {
 		}
 	}
 
-	const calculateFetchStats = (startTs = Date.now()) => {
-		fetchStats.duration = (Date.now() - startTs) / 1000
+	const signalCompleted = (startTs = performance.now()) => {
+		fetchStats.duration = (performance.now() - startTs) / 1000
 		fetchStats.speed = fetchStats.size
 			? Math.round(fetchStats.size / fetchStats.duration)
 			: 0
@@ -172,8 +168,7 @@ async function fetch(resource, options, fetchState) {
 				controller = new AbortController()
 				fetchOptions.signal = controller.signal
 				if (signal) {
-					if (signal.aborted)
-						throw new Error('Providen signal is already aborted')
+					if (signal.aborted) controller.abort()
 					signal.addEventListener(
 						'abort',
 						() => {
@@ -189,6 +184,13 @@ async function fetch(resource, options, fetchState) {
 					}, timeouts.request)
 				}
 			}
+
+			if (timeout) {
+				overallTimeout = setTimeout(() => {
+					timeoutReason = 'overall'
+				}, timeout)
+			}
+
 			if (dbg.enabled)
 				dbg(
 					fetchState.fetchId,
@@ -198,10 +200,7 @@ async function fetch(resource, options, fetchState) {
 				)
 			const now = performance.now()
 			await limiter?.()
-			if (dbg.enabled) {
-				const ms = performance.now() - now
-				if (ms > 5) dbg(`limiter waited ${ms}ms`)
-			}
+
 			res = await origFetch(resource, fetchOptions)
 
 			if (validate) {
@@ -212,12 +211,6 @@ async function fetch(resource, options, fetchState) {
 			}
 
 			clearTimeout(requestTimeout)
-
-			if (timeout) {
-				overallTimeout = setTimeout(() => {
-					timeoutReason = 'overall'
-				}, timeout)
-			}
 
 			let bodyStartTs = performance.now()
 			res.body.on('resume', () => {
@@ -240,13 +233,12 @@ async function fetch(resource, options, fetchState) {
 				}, stall)
 			})
 			res.body.on('close', () => {
-				calculateFetchStats(bodyStartTs)
+				signalCompleted(bodyStartTs)
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
 			})
 
 			res.body.on('error', err => {
-				calculateFetchStats(bodyStartTs)
 				clearTimeout(bodyTimeout)
 				clearTimeout(stallTimeout)
 				controller.abort(timeoutReason)
@@ -263,14 +255,13 @@ async function fetch(resource, options, fetchState) {
 								err = new TimeoutError(timeoutReason, fetchState)
 							}, timeouts.body)
 						}
-						const result = prev.call(res, args)
+						const result = await prev.call(res, args)
 						const validator =
 							options[`validate${fKey[0].toUpperCase()}${fKey.slice(1)}`]
 						await validator?.(res, result, fetchState)
 						if (err?.type === 'body') throw err
-						return await result
+						return result
 					} catch (e) {
-						fetchState.resCompletedResolve?.(fetchStats)
 						if (e.type === 'aborted' && timeoutReason) {
 							throw new TimeoutError(timeoutReason, fetchState)
 						}
@@ -284,6 +275,7 @@ async function fetch(resource, options, fetchState) {
 						) {
 							return await fetch(resource, fetchState.options, fetchState)
 						} else {
+							fetchState.resCompletedResolve?.(fetchStats)
 							throw e
 						}
 					} finally {
@@ -292,10 +284,9 @@ async function fetch(resource, options, fetchState) {
 				}
 			}
 
-			res.completed = () =>
-				new Promise(resolve => {
-					fetchState.resCompletedResolve = resolve
-				})
+			res.completed = new Promise(resolve => {
+				fetchState.resCompletedResolve = resolve
+			})
 			res.retryCount = fetchState.retryCount
 		} catch (e) {
 			if (e.type === 'aborted' && timeoutReason) {
@@ -315,8 +306,8 @@ async function fetch(resource, options, fetchState) {
 }
 
 const makeFetch = (maxParallel, maxRps) => {
-	const sema = new Sema(maxParallel)
-	const limiter = RateLimit(maxRps, {uniformDistribution: true})
+	const sema = maxParallel ? new Sema(maxParallel) : null
+	const limiter = maxRps ? RateLimit(maxRps, {uniformDistribution: true}) : null
 
 	return async (resource, options) => {
 		await sema.acquire()

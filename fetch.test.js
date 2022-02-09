@@ -83,12 +83,12 @@ afterAll(async () => {
 	await fastify.close()
 })
 
-test.only('no timeout', async () => {
+test('no timeout', async () => {
 	const res = await makeReq()
 	await expect(res.buffer()).resolves.toBeTruthy()
 })
 
-describe.only('request timeout', () => {
+describe('request timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {request: 150}})
 		await expect(res.buffer()).resolves.toBeTruthy()
@@ -104,7 +104,7 @@ describe.only('request timeout', () => {
 	})
 })
 
-describe.only('body timeout', () => {
+describe('body timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {body: 150}})
 		await expect(res.buffer()).resolves.toBeTruthy()
@@ -122,7 +122,7 @@ describe.only('body timeout', () => {
 	})
 })
 
-describe.only('no-progress timeout', () => {
+describe('no-progress timeout', () => {
 	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {stall: 150}})
 		await expect(res.buffer()).resolves.toBeTruthy()
@@ -152,7 +152,7 @@ describe.only('no-progress timeout', () => {
 	})
 })
 
-describe.only('Retrying', () => {
+describe('Retrying', () => {
 	test('Retry 5 times', async () => {
 		expect.assertions(2)
 		try {
@@ -195,7 +195,8 @@ describe.only('Retrying', () => {
 	})
 })
 
-test.only(`Providing custom abort signal`, async () => {
+test(`Providing custom abort signal`, async () => {
+	expect.assertions(2)
 	const controller = new AbortController()
 	try {
 		await makeReq({requestTimeout: 500}, {signal: controller.signal})
@@ -208,14 +209,14 @@ test.only(`Providing custom abort signal`, async () => {
 
 // This suite is passing, but test is hanging and never quits
 describe('Validation', () => {
-	test.only('throw during validation', async () => {
+	test('throw during validation', async () => {
 		let good = false
 		expect.assertions(1)
 		try {
 			await makeReq(
 				{},
 				{
-					validate: args => {
+					validate: async args => {
 						console.log('Good - ' + good)
 						if (!good) {
 							good = true
@@ -247,8 +248,9 @@ describe('Validation', () => {
 		}
 	})
 
-	test.skip('throw during body validation (buffer) and retry', async () => {
+	test.only('throw during body validation (buffer) and retry', async () => {
 		// expect.assertions(2)
+		let good = false
 		const res = await makeReq(
 			{},
 			{
@@ -261,7 +263,7 @@ describe('Validation', () => {
 				retry: 5,
 			}
 		)
-		await expect(res.buffer()).not.toThrow('Error during validation a buffer')
-		expect(res.retryCount).toBe(2)
+		await expect(res.buffer).not.toThrow('Error during validation a buffer')
+		// expect(res.fetchStats.attempts).toBe(2)
 	})
 })
