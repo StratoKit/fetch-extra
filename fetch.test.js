@@ -46,7 +46,7 @@ class TimeoutStream extends Readable {
 const fastify = require('fastify')()
 fastify.route({
 	method: 'POST',
-	url: '/',
+	url: '/:any',
 	handler: async (req, rep) => {
 		const {
 			requestTimeout,
@@ -71,11 +71,12 @@ let port
  * 	speed?: number
  * 	bodyTimeouts?: {time: number; after: number}[]
  * 	status?: number
+ * 	id?: string
  * }} [reqOptions]
  * @param {import('.').ExtendedOptions} [options]
  */
 const makeReq = async (reqOptions, options) => {
-	return await fetch(`http://localhost:${port}`, {
+	return await fetch(`http://localhost:${port}/${reqOptions.id || ''}`, {
 		method: 'POST',
 		body: JSON.stringify(reqOptions),
 		headers: {'content-type': 'application/json'},
@@ -135,30 +136,35 @@ describe('body timeout', () => {
 	})
 })
 
-describe('no-progress timeout', () => {
+describe.only('no-progress timeout', () => {
 	test('makes it on time', async () => {
-		const resP = makeReq({}, {timeouts: {stall: 250}})
+		const resP = makeReq({id: 'miot'}, {timeouts: {stall: 250}})
 		await expect(resP).resolves.toBeDefined()
 		await expect((await resP).buffer()).resolves.toBeTruthy()
 	})
 	test('times out (no progress)', async () => {
 		const resP = makeReq(
-			{bodyTimeouts: [{after: 500, time: 500}]},
+			{id: 'tonp', bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {stall: 150}}
 		)
 		await expect(resP).resolves.toBeDefined()
 		await expect((await resP).buffer()).rejects.toThrow('Timeout: stall')
+		console.log('look at me tonp (proof that test succeeeds)')
 	})
 	test('does not timeout (no progress but for short term)', async () => {
 		const resP = makeReq(
-			{bodyTimeouts: [{after: 500, time: 50}]},
+			{id: 'dntnpbfs', bodyTimeouts: [{after: 500, time: 50}]},
 			{timeouts: {stall: 250}}
 		)
 		await expect(resP).resolves.toBeDefined()
 		await expect((await resP).buffer()).resolves.toBeTruthy()
+		console.log('look at me 2 (proof that test succeeeds)')
 	})
 	test('does not timeout (slow progress)', async () => {
-		const res = await makeReq({speed: 2048 * 1024}, {timeouts: {stall: 100}})
+		const res = await makeReq(
+			{id: 'dntsp', speed: 2048 * 1024},
+			{timeouts: {stall: 100}}
+		)
 		await expect(res.buffer()).resolves.toBeTruthy()
 	})
 })
