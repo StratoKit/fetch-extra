@@ -76,7 +76,7 @@ const fetch = async (
 		return await fetch(url, origOptions, requestState)
 	}
 
-	options.method = options.method.toUpperCase() || 'GET'
+	options.method = options.method?.toUpperCase() || 'GET'
 	let controller, requestTimeout, bodyTimeout, noProgressTimeout
 	let timeoutReason
 	if (options.timeouts) {
