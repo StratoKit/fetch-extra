@@ -441,4 +441,4 @@ const makeFetch = (maxParallel, maxRps) => {
 }
 
 module.exports = fetch
-exports.makeFetch = makeFetch
+Object.assign(module.exports, {makeFetch, HttpError, TimeoutError})
