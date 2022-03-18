@@ -1,6 +1,7 @@
 const origFetch = require('node-fetch')
 const AbortController = require('abort-controller')
 const debug = require('debug')
+const {performance} = require('perf_hooks')
 const dbg = debug('fetch')
 
 let globalFetchId = 0
