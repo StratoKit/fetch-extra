@@ -324,14 +324,43 @@ const fetch = async (
 
 			state.bodyTs = performance.now()
 
+			const onBodyResolve = () => {
+				dbg(id, `body complete`)
+				if (!validateStarted) {
+					signalCompleted(state)
+				}
+				onBodyFinish()
+			}
+			const onBodyError = error => {
+				dbg(id, `body failed`, error)
+				if (!validateStarted) {
+					if (error.type === 'aborted' && timedout) {
+						error = new TimeoutError(timedout, state)
+					}
+					signalCompleted(state, error)
+				}
+				onBodyFinish()
+			}
+			const onBodyFinish = () => {
+				if (userSignalHandler)
+					userSignal?.removeEventListener('abort', userSignalHandler)
+				if (clearAbort) {
+					clearAbort('body')
+					clearAbort('stall')
+					clearAbort('overall')
+				}
+			}
+
 			let validateStarted = false
-			const bodyPromise = /** @type {Promise<void>} */ (
-				new Promise((bodyResolve, bodyReject) => {
+			// the blocks below are just to keep the indentation
+			// and make the commit more readable
+			{
+				{
 					body.on('data', chunk => {
 						state.size += Buffer.byteLength(chunk)
 						makeAbort?.('stall')
 					})
-					body.on('close', bodyResolve)
+					body.on('close', onBodyResolve)
 					body.on('error', error => {
 						// HACK: we can't change the error from here
 						// we would need to wrap the stream
@@ -340,7 +369,7 @@ const fetch = async (
 							error.type = 'timeout'
 							error.message = tErr.message
 						}
-						bodyReject(error)
+						onBodyError(error)
 					})
 
 					for (const fKey of responseTypes) {
@@ -355,7 +384,6 @@ const fetch = async (
 								const result = await prev.call(response, args)
 								await validator?.(result, state)
 								dbg(id, fKey, `success`)
-								bodyResolve()
 								signalCompleted(state)
 								return result
 							} catch (error) {
@@ -363,7 +391,6 @@ const fetch = async (
 								if (error.type === 'aborted' && timedout) {
 									error = new TimeoutError(timedout, state)
 								}
-								bodyReject(error)
 								if (
 									retry &&
 									(await shouldRetry({
@@ -381,34 +408,8 @@ const fetch = async (
 							}
 						}
 					}
-				})
-			)
-			bodyPromise.then(
-				() => {
-					dbg(id, `body complete`)
-					if (!validateStarted) {
-						signalCompleted(state)
-					}
-				},
-				error => {
-					dbg(id, `body failed`, error)
-					if (!validateStarted) {
-						if (error.type === 'aborted' && timedout) {
-							error = new TimeoutError(timedout, state)
-						}
-						signalCompleted(state, error)
-					}
 				}
-			)
-			bodyPromise.finally(() => {
-				if (userSignalHandler)
-					userSignal?.removeEventListener('abort', userSignalHandler)
-				if (clearAbort) {
-					clearAbort('body')
-					clearAbort('stall')
-					clearAbort('overall')
-				}
-			})
+			}
 
 			return response
 		} catch (error) {
