@@ -1,5 +1,3 @@
-const origFetch = require('node-fetch')
-const AbortController = require('abort-controller')
 const debug = require('debug')
 const {performance} = require('perf_hooks')
 const dbg = debug('fetch')
@@ -201,6 +199,9 @@ const fetch = async (
 	options,
 	state = /** @type {FetchState} */ ({})
 ) => {
+	// this breaks the tests :/ https://github.com/nodejs/node/issues/35889
+	const origFetch = (await import('node-fetch')).default
+
 	let {
 		retry,
 		timeout,
@@ -255,7 +256,7 @@ const fetch = async (
 		try {
 			if (timeouts || userSignal || validate?.response) {
 				// @ts-ignore
-				controller = new AbortController()
+				controller = new (AbortController || require('abort-controller'))()
 				state.options.signal = controller.signal
 				if (state.userSignal) {
 					if (state.userSignal.aborted) {

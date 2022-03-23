@@ -12,7 +12,7 @@
 		"abort-controller": "^3.0.0",
 		"async-sema": "^3.1.1",
 		"debug": "^4.3.3",
-		"node-fetch": "^2.6.1"
+		"node-fetch": "^3.2.3"
 	},
 	"devDependencies": {
 		"@homer0/prettier-plugin-jsdoc": "^4.0.6",
