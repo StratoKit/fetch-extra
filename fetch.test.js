@@ -3,7 +3,7 @@ const {Readable} = require('stream')
 const AbortController = require('abort-controller')
 const delay = require('delay')
 
-jest.setTimeout(1000000)
+jest.setTimeout(5000)
 class TimeoutStream extends Readable {
 	constructor(size, speed, requestTimeout = 0, timeouts) {
 		super()
@@ -43,7 +43,19 @@ class TimeoutStream extends Readable {
 	}
 }
 
-const fastify = require('fastify')()
+const dbg = require('debug')('fastify')
+function Logger(...args) {
+	this.args = args
+}
+for (const k of ['info', 'error', 'debug', 'fatal', 'warn', 'trace']) {
+	Logger.prototype[k] = dbg
+}
+Logger.prototype.child = function () {
+	return new Logger()
+}
+const fastify = require('fastify')({
+	logger: new Logger(),
+})
 fastify.route({
 	method: 'POST',
 	url: '/:any',
@@ -76,7 +88,7 @@ let port
  * @param {import('.').ExtendedOptions} [options]
  */
 const makeReq = async (reqOptions, options) => {
-	return await fetch(`http://localhost:${port}/${reqOptions.id || ''}`, {
+	return await fetch(`http://localhost:${port}/${reqOptions?.id || ''}`, {
 		method: 'POST',
 		body: JSON.stringify(reqOptions),
 		headers: {'content-type': 'application/json'},
@@ -136,7 +148,7 @@ describe('body timeout', () => {
 	})
 })
 
-describe.only('no-progress timeout', () => {
+describe('no-progress timeout', () => {
 	test('makes it on time', async () => {
 		const resP = makeReq({id: 'miot'}, {timeouts: {stall: 250}})
 		await expect(resP).resolves.toBeDefined()
