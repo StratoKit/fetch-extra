@@ -352,61 +352,55 @@ const fetch = async (
 			}
 
 			let validateStarted = false
-			// the blocks below are just to keep the indentation
-			// and make the commit more readable
-			{
-				{
-					body.on('data', chunk => {
-						state.size += Buffer.byteLength(chunk)
-						makeAbort?.('stall')
-					})
-					body.on('close', onBodyResolve)
-					body.on('error', error => {
-						// HACK: we can't change the error from here
-						// we would need to wrap the stream
-						if (error.type === 'aborted' && timedout) {
-							const tErr = new TimeoutError(timedout, state)
-							error.type = 'timeout'
-							error.message = tErr.message
-						}
-						onBodyError(error)
-					})
+			body.on('data', chunk => {
+				state.size += Buffer.byteLength(chunk)
+				makeAbort?.('stall')
+			})
+			body.on('close', onBodyResolve)
+			body.on('error', error => {
+				// HACK: we can't change the error from here
+				// we would need to wrap the stream
+				if (error.type === 'aborted' && timedout) {
+					const tErr = new TimeoutError(timedout, state)
+					error.type = 'timeout'
+					error.message = tErr.message
+				}
+				onBodyError(error)
+			})
 
-					for (const fKey of responseTypes) {
-						const validator = validate?.[fKey]
-						if (!validator && !retry) continue
-						const prev = response[fKey]
-						response[fKey] = async (...args) => {
-							// Notify that we'll handle signaling
-							validateStarted = true
-							try {
-								dbg(id, fKey, `called`)
-								const result = await prev.call(response, args)
-								await validator?.(result, state)
-								dbg(id, fKey, `success`)
-								signalCompleted(state)
-								return result
-							} catch (error) {
-								dbg(id, fKey, `failed`)
-								if (error.type === 'aborted' && timedout) {
-									error = new TimeoutError(timedout, state)
-								}
-								if (
-									retry &&
-									(await shouldRetry({
-										state,
-										error,
-										response,
-									}).catch(() => false))
-								) {
-									return fetch(state.resource, state.options, state).then(r =>
-										r[fKey](...args)
-									)
-								}
-								signalCompleted(state, error)
-								throw error
-							}
+			for (const fKey of responseTypes) {
+				const validator = validate?.[fKey]
+				if (!validator && !retry) continue
+				const prev = response[fKey]
+				response[fKey] = async (...args) => {
+					// Notify that we'll handle signaling
+					validateStarted = true
+					try {
+						dbg(id, fKey, `called`)
+						const result = await prev.call(response, args)
+						await validator?.(result, state)
+						dbg(id, fKey, `success`)
+						signalCompleted(state)
+						return result
+					} catch (error) {
+						dbg(id, fKey, `failed`)
+						if (error.type === 'aborted' && timedout) {
+							error = new TimeoutError(timedout, state)
 						}
+						if (
+							retry &&
+							(await shouldRetry({
+								state,
+								error,
+								response,
+							}).catch(() => false))
+						) {
+							return fetch(state.resource, state.options, state).then(r =>
+								r[fKey](...args)
+							)
+						}
+						signalCompleted(state, error)
+						throw error
 					}
 				}
 			}
