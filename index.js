@@ -253,7 +253,7 @@ const fetch = async (
 		let controller, userSignalHandler
 		let makeAbort, clearAbort, timedout
 		try {
-			if (timeouts || userSignal) {
+			if (timeouts || userSignal || validate?.response) {
 				// @ts-ignore
 				controller = new AbortController()
 				state.options.signal = controller.signal
@@ -304,9 +304,13 @@ const fetch = async (
 			const {body} = response
 			if (validate?.response) {
 				response.body = undefined
-				// TODO abort the fetch if validation fails
-				// @ts-ignore
-				await validate?.response(response, state)
+				try {
+					// @ts-ignore
+					await validate?.response(response, state)
+				} catch (e) {
+					controller.abort()
+					throw e
+				}
 				response.body = body
 			}
 
