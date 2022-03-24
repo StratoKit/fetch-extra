@@ -321,7 +321,7 @@ const fetch = async (
 			}
 
 			makeAbort?.('body')
-			makeAbort?.('stall')
+			// makeAbort?.('stall')
 
 			state.bodyTs = performance.now()
 
@@ -347,16 +347,16 @@ const fetch = async (
 					userSignal?.removeEventListener('abort', userSignalHandler)
 				if (clearAbort) {
 					clearAbort('body')
-					clearAbort('stall')
+					// clearAbort('stall')
 					clearAbort('overall')
 				}
 			}
 
 			let validateStarted = false
-			body.on('data', chunk => {
-				state.size += Buffer.byteLength(chunk)
-				makeAbort?.('stall')
-			})
+			// body.on('data', chunk => {
+			// 	state.size += Buffer.byteLength(chunk)
+			// 	makeAbort?.('stall')
+			// })
 			body.on('close', onBodyResolve)
 			body.on('error', error => {
 				// HACK: we can't change the error from here
