@@ -1,130 +1,90 @@
 const debug = require('debug')
 const {performance} = require('perf_hooks')
+const {fetch: origFetch, Response} = require('native-fetch')
+const {
+	errors: {AbortError},
+} = require('undici')
+const {ReadableStream} = require('stream/web')
+const {HttpError, TimeoutError} = require('./errors')
 const dbg = debug('fetch')
+const {RESPONSE_TYPES, STATE_INTERNAL} = require('./constants')
 
 let globalFetchId = 0
 
-const responseTypes = [
-	'buffer',
-	'blob',
-	'arrayBuffer',
-	'json',
-	'text',
-	'textConverted',
-]
-
-class HttpError extends Error {
-	constructor(status, statusText, response, state) {
-		const {
-			fetchId,
-			attempt,
-			options: {method},
-			resource,
-		} = state
-		super(
-			`${fetchId}-${attempt} HTTP ${status} - ${statusText} (${method} ${resource})`
-		)
-		this.status = status
-		this.statusText = statusText
-		this.response = response
-		this.state = state
-		Error.captureStackTrace(this, HttpError)
-	}
-}
-
-class TimeoutError extends Error {
-	constructor(type, state) {
-		const {
-			fetchId,
-			attempt,
-			options: {method},
-			resource,
-			startTs,
-			bodyTs,
-		} = state
-		const now = performance.now()
-		const reqMs = Math.round(bodyTs ? bodyTs - startTs : now - startTs)
-		const bodyMs = Math.round(bodyTs ? now - bodyTs : 0)
-		super(
-			`${fetchId}-${attempt} Timeout: ${type} (${method} ${resource} - ${
-				bodyMs ? `${reqMs}ms+${bodyMs}` : reqMs
-			}ms)`
-		)
-		this.type = type
+class FetchState {
+	constructor(resource, options) {
+		this[STATE_INTERNAL] = {
+			signalCompleted: error => {
+				const {size, startTs} = this
+				const duration = performance.now() - startTs
+				const speed = this.size ? Math.round(this.size / duration) : 0
+				const stats = {size, duration, speed, attempts: this.attempt}
+				if (error) {
+					// @ts-ignore
+					error.stats = stats
+					// @ts-ignore
+					this[STATE_INTERNAL].reject(error)
+				} else {
+					this[STATE_INTERNAL].resolve(stats)
+				}
+			},
+		}
 		this.resource = resource
-		this.method = method
-		this.state = state
-		this.headers = state.options.headers
-		Error.captureStackTrace(this, TimeoutError)
+		this.options = {...options}
+		delete this.options.operationId
+		this.id = options.operationId || ++globalFetchId
+		this.completed = new Promise((resolve, reject) => {
+			this[STATE_INTERNAL].resolve = resolve
+			this[STATE_INTERNAL].reject = reject
+		})
+		// prevent node uncaught exception
+		this.completed.catch(() => {})
+		this.attempt = 0
+	}
+
+	get fullId() {
+		return `${this.id}-${this.attempt}`
 	}
 }
 
-/**
- * @typedef {string | Request} Resource
- * @typedef {{
- * 	method?: string
- * 	signal?: AbortSignal
- * 	headers?: Headers | {[header: string]: string}
- * 	body?: string | Buffer | ReadableStream
- * }} Options
- * @typedef {Options & {
- * 	retry?: RetryDef
- * 	timeout?: number
- * 	timeouts?: {
- * 		overall?: number
- * 		request?: number
- * 		stall?: number
- * 		body?: number
- * 	}
- * 	validate?:
- * 		| true
- * 		| ValidateFn
- * 		| {
- * 				response?: boolean | ValidateFn
- * 				buffer?: ValidateFn
- * 				blob?: ValidateFn
- * 				arrayBuffer?: ValidateFn
- * 				json?: ValidateFn
- * 				text?: ValidateFn
- * 				textConverted?: ValidateFn
- * 		  }
- * 	signal?: AbortSignal
- * 	limiter?: ReturnType<import('async-sema').RateLimit>
- * }} ExtendedOptions
- * @typedef {(data: any, state: FetchState) => Promise<void> | void} ValidateFn
- * @typedef {{
- * 	resource: Resource
- * 	options: Options
- * 	userSignal?: AbortSignal
- * 	retry?: RetryDef
- * 	fetchId: number | string
- * 	attempt: number
- * 	completed: Promise<FetchStats>
- * 	resolve: (stats: FetchStats) => void
- * 	reject: (error: Error & {stats: FetchStats}) => void
- * 	startTs: number
- * 	bodyTs?: number
- * 	size: number
- * }} FetchState
- * @typedef {{
- * 	size: number
- * 	duration: number
- * 	attempts: number
- * 	speed: number
- * }} FetchStats
- * @typedef {{
- * 	state: FetchState
- * 	error?: Error
- * 	response?: Response
- * }} RetryFnParams
- * @typedef {| {
- * 			resource?: Resource
- * 			options?: Options
- * 	  }
- * 	| boolean} RetryResponse
- * @typedef {| number
- * 	| ((params: RetryFnParams) => Promise<RetryResponse> | RetryResponse)} RetryDef
- */
+const wrapBodyStream = (stream, state) => {
+	const {makeAbort, clearAbort, onBodyResolve, onBodyError} =
+		state[STATE_INTERNAL]
+	let reader
+
+	return new ReadableStream({
+		type: 'bytes',
+
+		start() {
+			reader = stream.getReader()
+		},
+
+		async pull(controller) {
+			if (!state.bodyTs) {
+				dbg(`${state.fullId} body processing started`)
+				makeAbort?.('body')
+				state.bodyTs = performance.now()
+				state.size = 0
+			}
+			makeAbort?.('stall')
+			const {done, value} = await reader.read().catch(e => {
+				onBodyError(e)
+				throw e
+			})
+			clearAbort?.('stall')
+			if (done) {
+				onBodyResolve()
+				return controller.close()
+			}
+			state.size += value.byteLength
+			controller.enqueue(value)
+		},
+
+		cancel(reason) {
+			reader.cancel(reason)
+		},
+	})
+}
 
 /**
  * Mutates `params`
@@ -134,9 +94,8 @@ class TimeoutError extends Error {
  */
 const shouldRetry = async params => {
 	const {state} = params
-	const {retry} = state
-	if (!retry) return false
 	const attempt = state.attempt
+	const retry = state.options.retry
 	if (typeof retry === 'number') {
 		if (attempt < retry) {
 			dbg('retry', attempt, retry)
@@ -160,27 +119,8 @@ const shouldRetry = async params => {
 			if (retryResult === true) return true
 		} catch {}
 	}
-	dbg(state.fetchId, 'retry denied')
+	dbg(state.id, 'retry denied')
 	return false
-}
-
-/**
- * @param {FetchState} state
- * @param {Error}      [error]
- */
-const signalCompleted = (state, error) => {
-	const {size, startTs} = state
-	const duration = performance.now() - startTs
-	const speed = state.size ? Math.round(state.size / duration) : 0
-	const stats = {size, duration, speed, attempts: state.attempt}
-	if (error) {
-		// @ts-ignore
-		error.stats = stats
-		// @ts-ignore
-		state.reject(error)
-	} else {
-		state.resolve(stats)
-	}
 }
 
 const defaultValidate = (response, state) => {
@@ -188,236 +128,203 @@ const defaultValidate = (response, state) => {
 		throw new HttpError(response.status, response.statusText, response, state)
 }
 
-/**
- * @param {Resource}        resource
- * @param {ExtendedOptions} [options]
- * @param {FetchState}      [state]
- * @returns {Promise<Response & {completed: Promise<FetchStats>}>} }
- */
-const fetch = async (
-	resource,
-	options,
-	state = /** @type {FetchState} */ ({})
-) => {
-	// this breaks the tests :/ https://github.com/nodejs/node/issues/35889
-	const origFetch = (await import('node-fetch')).default
+const prepareOptions = state => {
+	const options = {...state.options}
+	let makeAbort, clearAbort, abortController, userSignal, userSignalHandler
 
-	let {
-		retry,
-		timeout,
-		timeouts,
-		validate,
-		signal: userSignal,
-		limiter,
-		...rest
-	} = options || {}
+	if (!options.method) options.method = 'GET'
 
-	state.resource = resource
-	state.options = /** @type {Options} */ (rest)
-	if (!state.options.method) state.options.method = 'GET'
-	if (!state.fetchId) state.fetchId = ++globalFetchId
-	if (retry) state.retry = retry
-	if (userSignal) state.userSignal = userSignal
-	if (!state.completed) {
+	if (options.timeout) {
+		options.timeouts = {...options.timeouts, overall: options.timeout}
+		delete options.timeout
+	}
+
+	if (options.validate === true) {
+		options.validate = {response: defaultValidate}
+	} else if (typeof options.validate === 'function') {
+		options.validate = {response: options.validate}
+	} else if (options.validate?.response === true) {
+		options.validate.response = defaultValidate
+	}
+
+	if (options.timeouts || options.signal || options.validate?.response) {
 		// @ts-ignore
-		state.completed = new Promise((resolve, reject) => {
-			state.resolve = resolve
-			state.reject = reject
-		})
-		// prevent node uncaught exception
-		state.completed.catch(() => {})
+		abortController = new (AbortController || require('abort-controller'))()
+		userSignal = options.signal
+		if (userSignal) {
+			if (userSignal.aborted) {
+				const error = new AbortError()
+				throw error
+			}
+			userSignalHandler = arg => abortController.abort(arg)
+			userSignal.addEventListener('abort', userSignalHandler, {
+				once: true,
+			})
+		}
+		options.signal = abortController.signal
+		if (options.timeouts) {
+			const myTimeouts = {}
+			makeAbort = reason => {
+				const ms = /** @type {{[n: string]: number}} */ (options.timeouts)[
+					reason
+				]
+				if (!ms) return
+				clearTimeout(myTimeouts[reason])
+				myTimeouts[reason] = setTimeout(() => {
+					dbg(`${state.fullId}`, reason, 'timeout')
+					state[STATE_INTERNAL].timedout = reason
+					abortController.abort(reason)
+				}, ms).unref()
+			}
+			clearAbort = reason => clearTimeout(myTimeouts[reason])
+		}
 	}
 
-	if (timeout) {
-		if (!timeouts) timeouts = {}
-		timeouts.overall = timeout
+	const onBodyResolve = () => {
+		dbg(state.fullId, `body complete`)
+		if (!state[STATE_INTERNAL].validateStarted) {
+			state[STATE_INTERNAL].signalCompleted()
+		}
+		onBodyFinish()
 	}
 
-	if (validate) {
-		if (validate === true) {
-			validate = {response: defaultValidate}
-		} else if (typeof validate === 'function') {
-			validate = {response: validate}
+	const onBodyError = error => {
+		if (!state[STATE_INTERNAL].validateStarted) {
+			if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
+			}
+			state[STATE_INTERNAL].signalCompleted(error)
 		}
-		if (validate.response === true) {
-			validate.response = defaultValidate
-		}
-	} else {
-		validate = undefined
+		dbg(state.fullId, `body failed`, error)
+		onBodyFinish()
 	}
-	do {
-		let attempt = state.attempt || 0
-		state.attempt = ++attempt
-		const id = `${state.fetchId}-${attempt}`
-		if (attempt > 1) dbg(id, `retrying...`)
-		state.size = 0
-		let controller, userSignalHandler
-		let makeAbort, clearAbort, timedout
-		try {
-			if (timeouts || userSignal || validate?.response) {
-				// @ts-ignore
-				controller = new (AbortController || require('abort-controller'))()
-				state.options.signal = controller.signal
-				if (state.userSignal) {
-					if (state.userSignal.aborted) {
-						const error = new Error(`User aborted fetch.`)
-						// @ts-ignore
-						error.type = 'aborted'
-						throw error
+
+	const onBodyFinish = () => {
+		if (userSignalHandler)
+			userSignal?.removeEventListener('abort', userSignalHandler)
+		if (clearAbort) {
+			clearAbort('body')
+			clearAbort('overall')
+		}
+	}
+
+	Object.assign(state[STATE_INTERNAL], {
+		options,
+		makeAbort,
+		clearAbort,
+		abortController,
+		onBodyResolve,
+		onBodyError,
+	})
+}
+
+const proxyResponse = (response, state) =>
+	new Proxy(response, {
+		get(target, prop, receiver) {
+			if (!RESPONSE_TYPES.has(prop)) return Reflect.get(target, prop, receiver)
+
+			const prev = response[prop]
+			return async (...args) => {
+				// Notify that we'll handle signaling
+				try {
+					dbg(state.fullId, prop, `called`)
+					const validateFn = state[STATE_INTERNAL].options.validate?.[prop]
+					if (validateFn) state[STATE_INTERNAL].validateStarted = true
+					const result = await prev.call(response, args)
+					await validateFn?.(result, state)
+					dbg(state.fullId, prop, `success`)
+					state[STATE_INTERNAL].signalCompleted()
+					return result
+				} catch (error) {
+					if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+						error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 					}
-					userSignalHandler = arg => controller.abort(arg)
-					state.userSignal.addEventListener('abort', userSignalHandler, {
-						once: true,
-					})
-				}
-				if (timeouts) {
-					const myTimeouts = {}
-					makeAbort = reason => {
-						const ms = /** @type {{[n: string]: number}} */ (timeouts)[reason]
-						if (!ms) return
-						clearTimeout(myTimeouts[reason])
-						myTimeouts[reason] = setTimeout(() => {
-							dbg(id, reason, 'timeout')
-							timedout = reason
-							controller.abort(reason)
-						}, ms).unref()
+					dbg(state.fullId, prop, `failed`, error)
+					if (
+						await shouldRetry({
+							state,
+							error,
+							response,
+						}).catch(() => false)
+					) {
+						return fetch(state.resource, undefined, state).then(r =>
+							r[prop](...args)
+						)
 					}
-					clearAbort = reason => clearTimeout(myTimeouts[reason])
+					state[STATE_INTERNAL].signalCompleted(error)
+					throw error
 				}
 			}
+		},
+	})
 
-			await limiter?.()
+/**
+ * @param {Resource}     resource
+ * @param {FetchOptions} [options]
+ * @param {FetchState}   [state]
+ * @returns {Promise<FetchResponse>}
+ */
+const fetch = async (resource, options, state) => {
+	state ||= new FetchState(resource, options)
+	do {
+		state.attempt++
+		if (state.attempt > 1) dbg(state.fullId, `retrying...`)
+		state.size = undefined
+		state[STATE_INTERNAL].timedout = undefined
+		state[STATE_INTERNAL].validateStarted = false
+		try {
+			prepareOptions(state)
+			const {options, makeAbort, clearAbort, abortController} =
+				state[STATE_INTERNAL]
+			await options.limiter?.()
 
 			makeAbort?.('overall')
 			makeAbort?.('request')
-			dbg(id, state.options.method, state.resource, state.options)
+			dbg(
+				state.fullId,
+				state[STATE_INTERNAL].options.method,
+				state.resource,
+				state.options
+			)
 
 			state.startTs = performance.now()
-			const response = /**
-			 * @type {Response & {
-			 * 	completed: Promise<FetchStats>
-			 * }}
-			 */ (await origFetch(state.resource, state.options))
+			let response = await origFetch(state.resource, options)
+			if (response.body) {
+				response = new Response(wrapBodyStream(response.body, state), response)
+			}
 			response.completed = state.completed
 
 			clearAbort?.('request')
 
-			const {body} = response
-			if (validate?.response) {
-				response.body = undefined
+			if (options.validate?.response) {
+				state[STATE_INTERNAL].validateStarted = true
 				try {
 					// @ts-ignore
-					await validate?.response(response, state)
+					await options.validate.response(response.clone(), state)
 				} catch (e) {
-					controller.abort()
+					abortController.abort()
 					throw e
 				}
-				response.body = body
 			}
 
-			if (!body) {
-				signalCompleted(state)
+			if (!response.body) {
+				state[STATE_INTERNAL].signalCompleted()
 				return response
 			}
 
-			makeAbort?.('body')
-			makeAbort?.('stall')
-
-			state.bodyTs = performance.now()
-
-			const onBodyResolve = () => {
-				dbg(id, `body complete`)
-				if (!validateStarted) {
-					signalCompleted(state)
-				}
-				onBodyFinish()
-			}
-			const onBodyError = error => {
-				dbg(id, `body failed`, error)
-				if (!validateStarted) {
-					if (error.type === 'aborted' && timedout) {
-						error = new TimeoutError(timedout, state)
-					}
-					signalCompleted(state, error)
-				}
-				onBodyFinish()
-			}
-			const onBodyFinish = () => {
-				if (userSignalHandler)
-					userSignal?.removeEventListener('abort', userSignalHandler)
-				if (clearAbort) {
-					clearAbort('body')
-					clearAbort('stall')
-					clearAbort('overall')
-				}
-			}
-
-			let validateStarted = false
-			body.on('data', chunk => {
-				state.size += Buffer.byteLength(chunk)
-				makeAbort?.('stall')
-			})
-			body.on('close', onBodyResolve)
-			body.on('error', error => {
-				// HACK: we can't change the error from here
-				// we would need to wrap the stream
-				if (error.type === 'aborted' && timedout) {
-					const tErr = new TimeoutError(timedout, state)
-					error.type = 'timeout'
-					error.message = tErr.message
-				}
-				onBodyError(error)
-			})
-
-			for (const fKey of responseTypes) {
-				const validator = validate?.[fKey]
-				if (!validator && !retry) continue
-				const prev = response[fKey]
-				response[fKey] = async (...args) => {
-					// Notify that we'll handle signaling
-					validateStarted = true
-					try {
-						dbg(id, fKey, `called`)
-						const result = await prev.call(response, args)
-						await validator?.(result, state)
-						dbg(id, fKey, `success`)
-						signalCompleted(state)
-						return result
-					} catch (error) {
-						dbg(id, fKey, `failed`)
-						if (error.type === 'aborted' && timedout) {
-							error = new TimeoutError(timedout, state)
-						}
-						if (
-							retry &&
-							(await shouldRetry({
-								state,
-								error,
-								response,
-							}).catch(() => false))
-						) {
-							return fetch(state.resource, state.options, state).then(r =>
-								r[fKey](...args)
-							)
-						}
-						signalCompleted(state, error)
-						throw error
-					}
-				}
-			}
-
-			return response
+			state[STATE_INTERNAL].validateStarted = false
+			return proxyResponse(response, state)
 		} catch (error) {
 			// Here we catch request errors only
-			clearAbort?.('request')
-			if (error.type === 'aborted' && timedout) {
-				error = new TimeoutError(timedout, state)
+			state[STATE_INTERNAL].clearAbort?.('request')
+			if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 			}
-			dbg(`${state.fetchId}-${state.attempt} failed`, error)
-			if (retry && (await shouldRetry({state, error}))) {
+			dbg(`${state.fullId} failed`, error)
+			if (await shouldRetry({state, error})) {
 				continue
 			}
-			signalCompleted(state, error)
+			state[STATE_INTERNAL].signalCompleted(error)
 			throw error
 		}
 	} while (true)
