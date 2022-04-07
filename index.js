@@ -1,6 +1,6 @@
 const debug = require('debug')
 const {performance} = require('perf_hooks')
-const {fetch: origFetch, Response} = require('native-fetch')
+const {fetch: origFetch, Headers, Request, Response} = require('native-fetch')
 const {
 	errors: {AbortError},
 } = require('undici')
@@ -349,4 +349,11 @@ const makeFetch = (maxParallel, maxRps) => {
 }
 
 module.exports = fetch
-Object.assign(module.exports, {makeFetch, HttpError, TimeoutError})
+Object.assign(module.exports, {
+	makeFetch,
+	HttpError,
+	TimeoutError,
+	Headers,
+	Request,
+	Response,
+})
