@@ -117,7 +117,9 @@ const shouldRetry = async params => {
 				return true
 			}
 			if (retryResult === true) return true
-		} catch {}
+		} catch (e) {
+			dbg(state.id, `retry fn thrown: ${e}`)
+		}
 	}
 	dbg(state.id, 'retry denied')
 	return false
