@@ -21,6 +21,10 @@ class TimeoutStream extends Readable {
 			this.requestTimeout = 0
 		}
 		const toTransfer = Math.min(this.size - this._transferred, chunkSize)
+		if (toTransfer === 0) {
+			this.push(null)
+			return
+		}
 		if (this.speed) await delay((toTransfer / this.speed) * 1000)
 		if (this.timeouts.length && this.timeouts[0].after <= this._transferred) {
 			await delay(this.timeouts[0].time)
@@ -416,5 +420,18 @@ describe('Validation', () => {
 		expect(err?.message).toMatch(
 			`HTTP 403 - Forbidden (POST http://localhost:${port}/validation-test)`
 		)
+	})
+})
+
+describe('body', () => {
+	test('0-length body', async () => {
+		const res = await makeReq({id: '0-body-test', size: 0})
+		expect(res.body).toBeDefined()
+		const blob = await res.blob()
+		expect(blob.size).toBe(0)
+	})
+	test('null body status', async () => {
+		const res = await makeReq({id: 'null-body-test', status: 204, size: 10})
+		expect(res).toHaveProperty('body', null)
 	})
 })

@@ -4,7 +4,7 @@ const {fetch: origFetch, Headers, Request, Response} = require('native-fetch')
 const {
 	errors: {AbortError},
 } = require('undici')
-const {ReadableStream} = require('stream/web')
+const {ReadableStream, WritableStream} = require('stream/web')
 const {HttpError, TimeoutError} = require('./errors')
 const dbg = debug('fetch')
 const {RESPONSE_TYPES, STATE_INTERNAL} = require('./constants')
@@ -291,8 +291,22 @@ const fetch = async (resource, options, state) => {
 
 			state.startTs = performance.now()
 			let response = await origFetch(state.resource, options)
-			if (response.body) {
-				response = new Response(wrapBodyStream(response.body, state), response)
+			const {body, status} = response
+			// Prevent null body errors on Response creation
+			const hasBody =
+				body &&
+				// https://fetch.spec.whatwg.org/#statuses
+				status !== 101 &&
+				status !== 103 &&
+				status !== 204 &&
+				status !== 205 &&
+				status !== 304
+			if (hasBody) {
+				response = new Response(wrapBodyStream(body, state), response)
+			} else if (body) {
+				// Clear body from response and consume stream to prevent leaks
+				body.pipeTo(new WritableStream())
+				response = new Response(null, response)
 			}
 			response.completed = state.completed
 
@@ -309,7 +323,7 @@ const fetch = async (resource, options, state) => {
 				}
 			}
 
-			if (!response.body) {
+			if (!hasBody) {
 				state[STATE_INTERNAL].signalCompleted()
 				return response
 			}
