@@ -1,8 +1,11 @@
 const debug = require('debug')
 const {performance} = require('perf_hooks')
-const {fetch: origFetch, Headers, Request, Response} = require('native-fetch')
 const {
-	errors: {AbortError},
+	fetch: origFetch,
+	Headers,
+	Request,
+	Response,
+	errors: {RequestAbortedError},
 } = require('undici')
 const {ReadableStream, WritableStream} = require('stream/web')
 const {HttpError, TimeoutError} = require('./errors')
@@ -155,7 +158,7 @@ const prepareOptions = state => {
 		userSignal = options.signal
 		if (userSignal) {
 			if (userSignal.aborted) {
-				const error = new AbortError()
+				const error = new RequestAbortedError()
 				throw error
 			}
 			userSignalHandler = arg => abortController.abort(arg)

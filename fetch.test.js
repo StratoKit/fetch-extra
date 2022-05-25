@@ -310,7 +310,7 @@ describe(`Providing custom abort signal`, () => {
 		try {
 			await makeReq({requestTimeout: 500}, {signal: controller.signal})
 		} catch (e) {
-			expect(e.code).toBe('ABORT_ERR')
+			expect(e.code).toBe('UND_ERR_ABORTED')
 		}
 	})
 	test('successful', async () => {
