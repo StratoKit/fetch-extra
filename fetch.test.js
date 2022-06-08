@@ -61,6 +61,13 @@ const fastify = require('fastify')({
 	logger: new Logger(),
 })
 fastify.route({
+	method: 'GET',
+	url: '/',
+	handler: async (req, rep) => {
+		return 'hello'
+	},
+})
+fastify.route({
 	method: 'POST',
 	url: '/:id',
 	handler: async (req, rep) => {
@@ -113,6 +120,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await fastify.close()
+})
+
+test('no options', async () => {
+	const resultP = fetch(`http://localhost:${port}`)
+	await expect(resultP).resolves.toBeTruthy()
+	const result = await resultP
+	expect(result).toHaveProperty('ok', true)
+	expect(await result.text()).toBe('hello')
 })
 
 test('no timeout', async () => {

@@ -34,8 +34,8 @@ class FetchState {
 		}
 		this.resource = resource
 		this.options = {...options}
+		this.id = this.options.operationId || ++globalFetchId
 		delete this.options.operationId
-		this.id = options.operationId || ++globalFetchId
 		this.completed = new Promise((resolve, reject) => {
 			this[STATE_INTERNAL].resolve = resolve
 			this[STATE_INTERNAL].reject = reject
