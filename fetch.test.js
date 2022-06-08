@@ -233,15 +233,17 @@ describe('overall timeout', () => {
 describe('Retrying', () => {
 	test('Retry 5 times', async () => {
 		expect.assertions(2)
+		let err
 		try {
 			await makeReq(
 				{requestTimeout: 1000},
 				{timeouts: {request: 150}, retry: 5}
 			)
 		} catch (e) {
-			expect(e.state.attempt).toBe(5)
-			expect(e.message).toMatch('Timeout: request')
+			err = e
 		}
+		expect(err.state.attempt).toBe(5)
+		expect(err.message).toMatch('Timeout: request')
 	})
 
 	test('Change timeout parameters on retry', async () => {
@@ -310,23 +312,23 @@ describe(`Providing custom abort signal`, () => {
 	test('aborted after 100 ms', async () => {
 		const controller = new (AbortController || require('abort-controller'))()
 		expect.assertions(2)
-		try {
-			setTimeout(() => controller.abort(), 100)
-			await makeReq({requestTimeout: 1000}, {signal: controller.signal})
-		} catch (e) {
-			expect(controller.signal.aborted).toBe(true)
-			expect(e.code).toBe('ABORT_ERR')
-		}
+		let e
+		setTimeout(() => controller.abort(), 100)
+		await makeReq({requestTimeout: 1000}, {signal: controller.signal}).catch(
+			err => (e = err)
+		)
+		expect(controller.signal.aborted).toBe(true)
+		expect(e).toHaveProperty('code', 'ABORT_ERR')
 	})
 	test('aborted immediately', async () => {
 		const controller = new (AbortController || require('abort-controller'))()
 		controller.abort()
 		expect.assertions(1)
-		try {
-			await makeReq({requestTimeout: 500}, {signal: controller.signal})
-		} catch (e) {
-			expect(e.code).toBe('UND_ERR_ABORTED')
-		}
+		let e
+		await makeReq({requestTimeout: 500}, {signal: controller.signal}).catch(
+			err => (e = err)
+		)
+		expect(e).toHaveProperty('code', 'UND_ERR_ABORTED')
 	})
 	test('successful', async () => {
 		const controller = new (AbortController || require('abort-controller'))()
@@ -342,41 +344,38 @@ describe('Validation', () => {
 	test('throw during validation', async () => {
 		let good = false
 		expect.assertions(1)
-		try {
-			await makeReq(
-				{},
-				{
-					validate: () => {
-						if (!good) {
-							good = true
-							throw new Error('Error during validation')
-						}
-					},
-					retry: 1,
-				}
-			)
-		} catch (e) {
-			expect(e.message).toBe('Error during validation')
-		}
+		let e
+		await makeReq(
+			{},
+			{
+				validate: () => {
+					if (!good) {
+						good = true
+						throw new Error('Error during validation')
+					}
+				},
+				retry: 1,
+			}
+		).catch(err => (e = err))
+		expect(e).toHaveProperty('message', 'Error during validation')
 	})
 
 	test('throw during body validation (blob)', async () => {
 		expect.assertions(1)
-		try {
-			const res = await makeReq(
-				{},
-				{
-					validate: {
-						blob: () => {
-							throw new Error('Error during validation a blob')
-						},
+		const res = await makeReq(
+			{},
+			{
+				validate: {
+					blob: () => {
+						throw new Error('Error during validation a blob')
 					},
-				}
-			)
-			await expect(res.blob()).resolves.toBeInstanceOf(Blob)
-		} catch (e) {
-			expect(e.message).toMatch('Error during validation a blob')
-		}
+				},
+			}
+		)
+		await expect(res.blob()).rejects.toHaveProperty(
+			'message',
+			'Error during validation a blob'
+		)
 	})
 
 	test('throw during body validation (blob) and retry', async () => {
