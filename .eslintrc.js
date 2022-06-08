@@ -45,7 +45,7 @@ const rules = {...nicest, ...maybe, ...suck}
 module.exports = {
 	env: {
 		commonjs: true,
-		es6: true,
+		es2021: true,
 		node: true,
 	},
 	extends: [
@@ -55,7 +55,7 @@ module.exports = {
 		'plugin:prettier/recommended',
 	],
 	ignorePatterns: ['/build/**/*', '/coverage/**/*', '/dist/**/*'],
-	plugins: ['jest',],
+	plugins: ['jest'],
 	reportUnusedDisableDirectives: true,
 	rules,
 	settings: {
