@@ -195,7 +195,7 @@ const prepareOptions = state => {
 
 	const onBodyError = error => {
 		if (!state[STATE_INTERNAL].validateStarted) {
-			if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+			if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
 				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 			}
 			state[STATE_INTERNAL].signalCompleted(error)
@@ -241,7 +241,7 @@ const proxyResponse = (response, state) =>
 					state[STATE_INTERNAL].signalCompleted()
 					return result
 				} catch (error) {
-					if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+					if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
 						error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 					}
 					dbg(state.fullId, prop, `failed`, error)
@@ -336,7 +336,7 @@ const fetch = async (resource, options, state) => {
 		} catch (error) {
 			// Here we catch request errors only
 			state[STATE_INTERNAL].clearAbort?.('request')
-			if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+			if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
 				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 			}
 			dbg(`${state.fullId} failed`, error)
