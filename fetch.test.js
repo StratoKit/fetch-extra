@@ -71,6 +71,7 @@ Logger.prototype.child = function () {
 }
 const fastify = require('fastify')({
 	logger: new Logger(),
+	forceCloseConnections: true,
 })
 fastify.route({
 	method: 'GET',
