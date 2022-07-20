@@ -4,8 +4,11 @@ const fetch = require('.')
 const {Readable} = require('stream')
 const {Blob} = require('buffer')
 const delay = require('delay')
+const debug = require('debug')
 
 class TimeoutStream extends Readable {
+	static globalId = 0
+
 	constructor(size, speed, requestTimeout = 0, timeouts) {
 		super()
 		this.size = size
@@ -15,23 +18,30 @@ class TimeoutStream extends Readable {
 		)
 		this._transferred = 0
 		this.speed = speed
+		this.dbg = debug(`timeoutStream:${TimeoutStream.globalId}`)
+		this.dbg('init', {size, speed, requestTimeout, timeouts})
+		TimeoutStream.globalId++
 	}
 	async _read(chunkSize) {
 		if (this.requestTimeout) {
+			this.dbg(`requestTimeout ${this.requestTimeout} ms`)
 			await delay(this.requestTimeout)
 			this.requestTimeout = 0
 		}
 		const toTransfer = Math.min(this.size - this._transferred, chunkSize)
 		if (toTransfer === 0) {
+			this.dbg('transfer done')
 			this.push(null)
 			return
 		}
 		if (this.speed) await delay((toTransfer / this.speed) * 1000)
 		if (this.timeouts.length && this.timeouts[0].after <= this._transferred) {
+			this.dbg(`bodyTimeout ${this.timeouts[0].time} ms`)
 			await delay(this.timeouts[0].time)
 			this.timeouts.splice(0, 1)
 		}
 		if (this.aborted) {
+			this.dbg('transfer aborted')
 			this.push(null)
 			return
 		}
@@ -43,12 +53,13 @@ class TimeoutStream extends Readable {
 		}
 	}
 	_destroy() {
+		this.dbg('destroying...')
 		this.aborted = true
 		this.push(null)
 	}
 }
 
-const dbg = require('debug')('fastify')
+const dbg = debug('fastify')
 function Logger(...args) {
 	this.args = args
 }
