@@ -8,10 +8,20 @@
 	},
 	"author": "StratoKit",
 	"license": "Copyright",
+	"engines": {
+		"node": ">=16.8"
+	},
+	"peerDependencies": {
+		"undici": "^5.8.0"
+	},
+	"peerDependenciesMeta": {
+		"undici": {
+			"optional": true
+		}
+	},
 	"dependencies": {
 		"async-sema": "^3.1.1",
-		"debug": "^4.3.3",
-		"undici": "^5.7.0"
+		"debug": "^4.3.3"
 	},
 	"devDependencies": {
 		"@homer0/prettier-plugin-jsdoc": "^4.0.6",
@@ -23,6 +33,7 @@
 		"eslint-plugin-prettier": "^4.0.0",
 		"fastify": "^3.20.2",
 		"prettier": "^2.3.2",
-		"tap": "^16.3.0"
+		"tap": "^16.3.0",
+		"undici": "^5.8.0"
 	}
 }

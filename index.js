@@ -1,16 +1,32 @@
 const debug = require('debug')
 const {performance} = require('perf_hooks')
-const {
-	fetch: origFetch,
-	Headers,
-	Request,
-	Response,
-	errors: {RequestAbortedError},
-} = require('undici')
 const {ReadableStream, WritableStream} = require('stream/web')
 const {HttpError, TimeoutError} = require('./errors')
 const dbg = debug('fetch')
 const {RESPONSE_TYPES, STATE_INTERNAL} = require('./constants')
+
+let origFetch = globalThis.fetch,
+	Headers = globalThis.Headers,
+	Request = globalThis.Request,
+	Response = globalThis.Response,
+	DOMException = globalThis.DOMException
+
+try {
+	const undici = require('undici')
+	origFetch = undici.fetch
+	Headers = undici.Headers
+	Request = undici.Request
+	Response = undici.Response
+	if (!DOMException) {
+		DOMException = require('undici/lib/fetch/constants').DOMException
+	}
+} catch (err) {
+	if (err.code === 'MODULE_NOT_FOUND' && origFetch) {
+		// do nothing, we'll use the built-in fetch
+	} else {
+		throw err
+	}
+}
 
 let globalFetchId = 0
 
@@ -158,8 +174,7 @@ const prepareOptions = state => {
 		userSignal = options.signal
 		if (userSignal) {
 			if (userSignal.aborted) {
-				const error = new RequestAbortedError()
-				throw error
+				throw new DOMException('The operation was aborted.', 'AbortError')
 			}
 			userSignalHandler = arg => abortController.abort(arg)
 			userSignal.addEventListener('abort', userSignalHandler, {
