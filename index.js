@@ -154,7 +154,7 @@ const prepareOptions = state => {
 
 	if (options.timeouts || options.signal || options.validate?.response) {
 		// @ts-ignore
-		abortController = new (AbortController || require('abort-controller'))()
+		abortController = new AbortController()
 		userSignal = options.signal
 		if (userSignal) {
 			if (userSignal.aborted) {

@@ -9,7 +9,6 @@
 	"author": "StratoKit",
 	"license": "Copyright",
 	"dependencies": {
-		"abort-controller": "^3.0.0",
 		"async-sema": "^3.1.1",
 		"debug": "^4.3.3",
 		"undici": "^5.7.0"

@@ -341,7 +341,7 @@ t.test('Retrying', async t => {
 
 t.test(`Providing custom abort signal`, async t => {
 	t.test('aborted after 100 ms', async t => {
-		const controller = new (AbortController || require('abort-controller'))()
+		const controller = new AbortController()
 		setTimeout(() => controller.abort(), 100)
 		await t.rejects(
 			makeReq({requestTimeout: 1000}, {signal: controller.signal}),
@@ -350,7 +350,7 @@ t.test(`Providing custom abort signal`, async t => {
 		t.equal(controller.signal.aborted, true)
 	})
 	t.test('aborted immediately', async t => {
-		const controller = new (AbortController || require('abort-controller'))()
+		const controller = new AbortController()
 		controller.abort()
 		await t.rejects(
 			makeReq({requestTimeout: 500}, {signal: controller.signal}),
@@ -358,7 +358,7 @@ t.test(`Providing custom abort signal`, async t => {
 		)
 	})
 	t.test('successful', async t => {
-		const controller = new (AbortController || require('abort-controller'))()
+		const controller = new AbortController()
 		const timeout = setTimeout(() => controller.abort(), 1000)
 		const res = await makeReq({}, {signal: controller.signal})
 		await res.blob()
