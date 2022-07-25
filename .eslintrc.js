@@ -55,10 +55,6 @@ module.exports = {
 		'plugin:prettier/recommended',
 	],
 	ignorePatterns: ['/build/**/*', '/coverage/**/*', '/dist/**/*'],
-	plugins: ['jest'],
 	reportUnusedDisableDirectives: true,
 	rules,
-	settings: {
-		jest: {version: '27'},
-	},
 }

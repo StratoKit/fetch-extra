@@ -1,16 +1,32 @@
 const debug = require('debug')
 const {performance} = require('perf_hooks')
-const {
-	fetch: origFetch,
-	Headers,
-	Request,
-	Response,
-	errors: {RequestAbortedError},
-} = require('undici')
 const {ReadableStream, WritableStream} = require('stream/web')
 const {HttpError, TimeoutError} = require('./errors')
 const dbg = debug('fetch')
 const {RESPONSE_TYPES, STATE_INTERNAL} = require('./constants')
+
+let origFetch = globalThis.fetch,
+	Headers = globalThis.Headers,
+	Request = globalThis.Request,
+	Response = globalThis.Response,
+	DOMException = globalThis.DOMException
+
+try {
+	const undici = require('undici')
+	origFetch = undici.fetch
+	Headers = undici.Headers
+	Request = undici.Request
+	Response = undici.Response
+	if (!DOMException) {
+		DOMException = require('undici/lib/fetch/constants').DOMException
+	}
+} catch (err) {
+	if (err.code === 'MODULE_NOT_FOUND' && origFetch) {
+		// do nothing, we'll use the built-in fetch
+	} else {
+		throw err
+	}
+}
 
 let globalFetchId = 0
 
@@ -154,12 +170,11 @@ const prepareOptions = state => {
 
 	if (options.timeouts || options.signal || options.validate?.response) {
 		// @ts-ignore
-		abortController = new (AbortController || require('abort-controller'))()
+		abortController = new AbortController()
 		userSignal = options.signal
 		if (userSignal) {
 			if (userSignal.aborted) {
-				const error = new RequestAbortedError()
-				throw error
+				throw new DOMException('The operation was aborted.', 'AbortError')
 			}
 			userSignalHandler = arg => abortController.abort(arg)
 			userSignal.addEventListener('abort', userSignalHandler, {
@@ -195,7 +210,7 @@ const prepareOptions = state => {
 
 	const onBodyError = error => {
 		if (!state[STATE_INTERNAL].validateStarted) {
-			if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+			if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
 				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 			}
 			state[STATE_INTERNAL].signalCompleted(error)
@@ -241,7 +256,7 @@ const proxyResponse = (response, state) =>
 					state[STATE_INTERNAL].signalCompleted()
 					return result
 				} catch (error) {
-					if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+					if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
 						error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 					}
 					dbg(state.fullId, prop, `failed`, error)
@@ -336,7 +351,7 @@ const fetch = async (resource, options, state) => {
 		} catch (error) {
 			// Here we catch request errors only
 			state[STATE_INTERNAL].clearAbort?.('request')
-			if (error.code === 'ABORT_ERR' && state[STATE_INTERNAL].timedout) {
+			if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
 				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 			}
 			dbg(`${state.fullId} failed`, error)

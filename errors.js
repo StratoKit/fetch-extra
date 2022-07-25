@@ -6,6 +6,7 @@ class HttpError extends Error {
 			resource,
 		} = state
 		super(`${fullId} HTTP ${status} - ${statusText} (${method} ${resource})`)
+		this.name = 'HttpError'
 		this.status = status
 		this.statusText = statusText
 		this.response = response
@@ -31,6 +32,7 @@ class TimeoutError extends Error {
 				bodyMs ? `${reqMs}ms+${bodyMs}` : reqMs
 			}ms)`
 		)
+		this.name = 'TimeoutError'
 		this.type = type
 		this.resource = resource
 		this.method = method
