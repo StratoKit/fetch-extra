@@ -4,12 +4,12 @@ const fetch = require('.')
 const {Readable} = require('stream')
 const {Blob} = require('buffer')
 const delay = require('delay')
+// @ts-ignore
 const debug = require('debug')
 
+let globalId = 0
 class TimeoutStream extends Readable {
-	static globalId = 0
-
-	constructor(size, speed, requestTimeout = 0, timeouts) {
+	constructor(size, speed, requestTimeout = 0, timeouts = []) {
 		super()
 		this.size = size
 		this.requestTimeout = requestTimeout
@@ -18,9 +18,9 @@ class TimeoutStream extends Readable {
 		)
 		this._transferred = 0
 		this.speed = speed
-		this.dbg = debug(`timeoutStream:${TimeoutStream.globalId}`)
+		this.dbg = debug(`timeoutStream:${globalId}`)
 		this.dbg('init', {size, speed, requestTimeout, timeouts})
-		TimeoutStream.globalId++
+		globalId++
 	}
 	async _read(chunkSize) {
 		if (this.requestTimeout) {
@@ -69,6 +69,7 @@ for (const k of ['info', 'error', 'debug', 'fatal', 'warn', 'trace']) {
 Logger.prototype.child = function () {
 	return new Logger()
 }
+// @ts-ignore
 const fastify = require('fastify')({
 	logger: new Logger(),
 	forceCloseConnections: true,
@@ -76,7 +77,7 @@ const fastify = require('fastify')({
 fastify.route({
 	method: 'GET',
 	url: '/',
-	handler: async (req, rep) => {
+	handler: async (_req, _rep) => {
 		return 'hello'
 	},
 })
@@ -115,7 +116,7 @@ let port
  * 	status?: number
  * 	id?: string
  * }} [reqOptions]
- * @param {import('.').ExtendedOptions} [options]
+ * @param {FetchOptions} [options]
  */
 const makeReq = async (reqOptions, options) => {
 	return await fetch(`http://localhost:${port}/${reqOptions?.id || ''}`, {
@@ -300,10 +301,12 @@ t.test('Retrying', async t => {
 				timeouts: {request: 250},
 				retry: async ({state}) => {
 					if (state.attempt > 2) return false
+					// @ts-ignore
 					if (!state.options.headers?.authorization) {
 						return {
 							options: {
 								// so it doesn't time out on retry
+								// @ts-ignore
 								body: state.options.body.replace('500', '100'),
 								headers: {
 									...state.options.headers,
@@ -431,6 +434,7 @@ t.test('Validation', async t => {
 				validate: true,
 				retry: ({error, state}) => {
 					err = error
+					// @ts-ignore
 					return {options: {body: state.options.body.replace('403', '200')}}
 				},
 			}
@@ -452,6 +456,7 @@ t.test('Validation', async t => {
 				validate: {response: true},
 				retry: ({error, state}) => {
 					err = error
+					// @ts-ignore
 					return {options: {body: state.options.body.replace('403', '200')}}
 				},
 			}

@@ -4,7 +4,8 @@
 	"description": "Adds timeouts, retries, limits to fetch",
 	"main": "index.js",
 	"scripts": {
-		"test": "tap"
+		"lint": "eslint .",
+		"test": "tap --lines 93 --functions 83 --branches 81 --statements 91"
 	},
 	"files": [
 		"README.md",
@@ -38,7 +39,6 @@
 		"delay": "^5.0.0",
 		"eslint": "^8.8.0",
 		"eslint-config-prettier": "^8.3.0",
-		"eslint-plugin-jest": "^26.1.0",
 		"eslint-plugin-prettier": "^4.0.0",
 		"fastify": "^3.20.2",
 		"prettier": "^2.3.2",

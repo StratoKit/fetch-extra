@@ -50,7 +50,6 @@ module.exports = {
 	},
 	extends: [
 		'eslint:recommended',
-		'plugin:jest/recommended',
 		// Keep this last, it overrides all style rules
 		'plugin:prettier/recommended',
 	],
