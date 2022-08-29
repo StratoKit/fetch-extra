@@ -1,11 +1,13 @@
 /* eslint no-shadow: ["error", { "allow": ["t"] }] */
 const t = require('tap')
 const fetch = require('.')
+const {fastify} = require('fastify')
 const {Readable} = require('stream')
 const {Blob} = require('buffer')
-const delay = require('delay')
 // @ts-ignore
 const debug = require('debug')
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms).unref())
 
 let globalId = 0
 class TimeoutStream extends Readable {
@@ -69,19 +71,19 @@ for (const k of ['info', 'error', 'debug', 'fatal', 'warn', 'trace']) {
 Logger.prototype.child = function () {
 	return new Logger()
 }
-// @ts-ignore
-const fastify = require('fastify')({
+const app = fastify({
+	// @ts-ignore
 	logger: new Logger(),
 	forceCloseConnections: true,
 })
-fastify.route({
+app.route({
 	method: 'GET',
 	url: '/',
 	handler: async (_req, _rep) => {
 		return 'hello'
 	},
 })
-fastify.route({
+app.route({
 	method: 'POST',
 	url: '/:id',
 	handler: async (req, rep) => {
@@ -91,11 +93,13 @@ fastify.route({
 			speed,
 			bodyTimeouts = [],
 			status,
-		} = req.body
+		} = /** @type {any} */ (req.body)
 		if (status) {
 			rep.code(status)
 		}
+		// @ts-ignore
 		if (req.params.id) {
+			// @ts-ignore
 			rep.header(`received-id`, req.params.id)
 		}
 		for (const [header, value] of Object.entries(req.headers)) {
@@ -128,12 +132,13 @@ const makeReq = async (reqOptions, options) => {
 }
 
 t.before(async () => {
-	await fastify.listen({port: 0})
-	port = fastify.server.address().port
+	await app.listen({port: 0})
+	// @ts-ignore
+	port = app.server.address().port
 })
 
 t.teardown(async () => {
-	await fastify.close()
+	await app.close()
 })
 
 t.test('no options', async t => {
