@@ -13,15 +13,23 @@ let origFetch = globalThis.fetch,
 
 try {
 	const undici = require('undici')
+	// @ts-ignore
 	origFetch = undici.fetch
+	// @ts-ignore
 	Headers = undici.Headers
+	// @ts-ignore
 	Request = undici.Request
+	// @ts-ignore
 	Response = undici.Response
 	if (!DOMException) {
 		DOMException = require('undici/lib/fetch/constants').DOMException
 	}
 } catch (err) {
-	if (err.code === 'MODULE_NOT_FOUND' && origFetch) {
+	if (
+		err.code === 'MODULE_NOT_FOUND' &&
+		// @ts-ignore
+		origFetch
+	) {
 		// do nothing, we'll use the built-in fetch
 	} else {
 		throw err
@@ -29,7 +37,6 @@ try {
 }
 
 let globalFetchId = 0
-
 class FetchState {
 	constructor(resource, options) {
 		this[STATE_INTERNAL] = {
@@ -59,6 +66,8 @@ class FetchState {
 		// prevent node uncaught exception
 		this.completed.catch(() => {})
 		this.attempt = 0
+		this.size = undefined
+		this.startTs = undefined
 	}
 
 	get fullId() {
@@ -241,7 +250,8 @@ const prepareOptions = state => {
 const proxyResponse = (response, state) =>
 	new Proxy(response, {
 		get(target, prop, receiver) {
-			if (!RESPONSE_TYPES.has(prop)) return Reflect.get(target, prop, receiver)
+			if (!RESPONSE_TYPES.has(String(prop)))
+				return Reflect.get(target, prop, receiver)
 
 			const prev = response[prop]
 			return async (...args) => {
@@ -257,6 +267,7 @@ const proxyResponse = (response, state) =>
 					return result
 				} catch (error) {
 					if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
+						// eslint-disable-next-line no-ex-assign
 						error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 					}
 					dbg(state.fullId, prop, `failed`, error)
@@ -294,9 +305,13 @@ const fetch = async (resource, options, state) => {
 		state[STATE_INTERNAL].validateStarted = false
 		try {
 			prepareOptions(state)
-			const {options, makeAbort, clearAbort, abortController} =
-				state[STATE_INTERNAL]
-			await options.limiter?.()
+			const {
+				options: currOptions,
+				makeAbort,
+				clearAbort,
+				abortController,
+			} = state[STATE_INTERNAL]
+			await currOptions.limiter?.()
 
 			makeAbort?.('overall')
 			makeAbort?.('request')
@@ -308,7 +323,9 @@ const fetch = async (resource, options, state) => {
 			)
 
 			state.startTs = performance.now()
-			let response = await origFetch(state.resource, options)
+			let response = /** @type {FetchResponse} */ (
+				await origFetch(state.resource, currOptions)
+			)
 			const {body, status} = response
 			// Prevent null body errors on Response creation
 			const hasBody =
@@ -320,21 +337,23 @@ const fetch = async (resource, options, state) => {
 				status !== 205 &&
 				status !== 304
 			if (hasBody) {
-				response = new Response(wrapBodyStream(body, state), response)
+				response = /** @type {FetchResponse} */ (
+					new Response(wrapBodyStream(body, state), response)
+				)
 			} else if (body) {
 				// Clear body from response and consume stream to prevent leaks
 				body.pipeTo(new WritableStream())
-				response = new Response(null, response)
+				response = /** @type {FetchResponse} */ (new Response(null, response))
 			}
 			response.completed = state.completed
 
 			clearAbort?.('request')
 
-			if (options.validate?.response) {
+			if (currOptions.validate?.response) {
 				state[STATE_INTERNAL].validateStarted = true
 				try {
 					// @ts-ignore
-					await options.validate.response(response.clone(), state)
+					await currOptions.validate.response(response.clone(), state)
 				} catch (e) {
 					abortController.abort()
 					throw e
@@ -346,12 +365,14 @@ const fetch = async (resource, options, state) => {
 				return response
 			}
 
+			// eslint-disable-next-line require-atomic-updates
 			state[STATE_INTERNAL].validateStarted = false
 			return proxyResponse(response, state)
 		} catch (error) {
 			// Here we catch request errors only
 			state[STATE_INTERNAL].clearAbort?.('request')
 			if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
+				// eslint-disable-next-line no-ex-assign
 				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
 			}
 			dbg(`${state.fullId} failed`, error)
@@ -361,6 +382,7 @@ const fetch = async (resource, options, state) => {
 			state[STATE_INTERNAL].signalCompleted(error)
 			throw error
 		}
+		// eslint-disable-next-line no-constant-condition
 	} while (true)
 }
 

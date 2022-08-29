@@ -1,0 +1,127 @@
+name: Node CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  # this needs to be a separate job because failures will fail to cache the store
+  cache:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+    steps:
+      - name: Checkout for cache
+        uses: actions/checkout@v2
+
+      - name: Cache node_modules
+        id: modules
+        uses: actions/cache@v2
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ matrix.node-version }}-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        if: ${{ success() && steps.modules.outputs.cache-hit != 'true' }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Get Date
+        if: ${{ success() && steps.modules.outputs.cache-hit != 'true' }}
+        id: get-date
+        run: |
+          echo "::set-output name=date::$(/bin/date -u "+%Y%m%d")"
+        shell: bash
+
+      - name: Cache npm store
+        if: ${{ success() && steps.modules.outputs.cache-hit != 'true' }}
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          # this key is used for all repos, and doesn't update after hit, so only use it for a day
+          key: ${{ runner.os }}-npm-${{ matrix.node-version }}-${{ steps.get-date.outputs.date }}
+
+      - name: npm install
+        if: ${{ success() && steps.modules.outputs.cache-hit != 'true' }}
+        run: npm install
+
+  lint:
+    needs: cache
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x]
+
+    env:
+      BASE_REF: ${{ github.base_ref }}
+
+    steps:
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          # Make git diff HEAD^ work
+          fetch-depth: 2
+
+      # if we can ever figure out how to checkout just the 2 commits together, do that
+      - name: Checkout for PR
+        # We use the actions/checkout token here, which got persisted
+        run: git fetch origin $BASE_REF --depth=1
+
+        # here we use the cache we built in the previous job
+      - name: node_modules cache
+        uses: actions/cache@v2
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ matrix.node-version }}-${{ hashFiles('**/package-lock.json') }}
+
+      - name: eslint
+        run: npm run lint
+
+  test:
+    needs: cache
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+
+    env:
+      BASE_REF: ${{ github.base_ref }}
+
+    steps:
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          # Make git diff HEAD^ work
+          fetch-depth: 2
+
+      # if we can ever figure out how to checkout just the 2 commits together, do that
+      - name: Checkout for PR
+        # We use the actions/checkout token here, which got persisted
+        run: git fetch origin $BASE_REF --depth=1
+
+        # here we use the cache we built in the previous job
+      - name: node_modules cache
+        uses: actions/cache@v2
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-modules-${{ matrix.node-version }}-${{ hashFiles('**/package-lock.json') }}
+
+      # Note, these only check changed files
+      - name: tests
+        run: npm test
+        env:
+          GH_EVENT: ${{ github.event_name }}

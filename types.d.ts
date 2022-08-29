@@ -1,7 +1,7 @@
-declare module 'node-fetch-wrapper'
+declare module 'fetch-extra'
 
-type Resource = import('undici/types/fetch').RequestInfo
-type FetchResponse = import('undici/types/fetch').Response & {
+type Resource = RequestInfo
+type FetchResponse = Response & {
 	completed: Promise<FetchStats>
 }
 type RetryResponse =
@@ -13,19 +13,17 @@ type RetryResponse =
 type RetryDef =
 	| number
 	| ((params: RetryFnParams) => Promise<RetryResponse> | RetryResponse)
-type FetchState = {
+declare class FetchState {
+	id: number | string
 	resource: Resource
 	options: FetchOptions
 	userSignal?: AbortSignal
 	retry?: RetryDef
-	fetchId: number | string
 	attempt: number
 	completed: Promise<FetchStats>
-	resolve: (stats: FetchStats) => void
-	reject: (error: Error & {stats: FetchStats}) => void
-	startTs: number
+	startTs?: number
 	bodyTs?: number
-	size: number
+	size?: number
 }
 type FetchStats = {
 	size: number
@@ -39,7 +37,7 @@ type RetryFnParams = {
 	response?: FetchResponse
 }
 type ValidateFn = (data: any, state: FetchState) => Promise<void> | void
-type FetchOptions = import('undici/types/fetch').RequestInit & {
+type FetchOptions = RequestInit & {
 	retry?: RetryDef
 	timeout?: number
 	timeouts?: {
@@ -61,5 +59,7 @@ type FetchOptions = import('undici/types/fetch').RequestInit & {
 				textConverted?: ValidateFn
 		  }
 	signal?: AbortSignal
-	limiter?: ReturnType<import('async-sema').RateLimit>
+	// import doesn't work
+	// limiter?: ReturnType<import('async-sema').RateLimit>
+	limiter?: () => Promise<void>
 }
