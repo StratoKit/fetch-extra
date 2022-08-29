@@ -5,7 +5,7 @@
 	"main": "index.js",
 	"scripts": {
 		"lint": "eslint .",
-		"test": "tap --lines 93 --functions 83 --branches 81 --statements 91"
+		"test": "tap --jobs=1 --lines 93 --functions 83 --branches 81 --statements 91"
 	},
 	"files": [
 		"README.md",
@@ -36,7 +36,6 @@
 	"devDependencies": {
 		"@homer0/prettier-plugin-jsdoc": "^5.1.4",
 		"@types/tap": "^15.0.7",
-		"delay": "^5.0.0",
 		"eslint": "^8.23.0",
 		"eslint-config-prettier": "^8.5.0",
 		"eslint-plugin-prettier": "^4.2.1",
