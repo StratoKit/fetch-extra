@@ -31,18 +31,18 @@
 	},
 	"dependencies": {
 		"async-sema": "^3.1.1",
-		"debug": "^4.3.3"
+		"debug": "^4"
 	},
 	"devDependencies": {
-		"@homer0/prettier-plugin-jsdoc": "^4.0.6",
+		"@homer0/prettier-plugin-jsdoc": "^5.1.4",
 		"@types/tap": "^15.0.7",
 		"delay": "^5.0.0",
-		"eslint": "^8.8.0",
-		"eslint-config-prettier": "^8.3.0",
-		"eslint-plugin-prettier": "^4.0.0",
-		"fastify": "^3.20.2",
-		"prettier": "^2.3.2",
+		"eslint": "^8.23.0",
+		"eslint-config-prettier": "^8.5.0",
+		"eslint-plugin-prettier": "^4.2.1",
+		"fastify": "^4.5.3",
+		"prettier": "^2.7.1",
 		"tap": "^16.3.0",
-		"undici": "^5.8.0"
+		"undici": "^5.10.0"
 	}
 }
