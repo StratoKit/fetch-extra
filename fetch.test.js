@@ -128,7 +128,7 @@ const makeReq = async (reqOptions, options) => {
 }
 
 t.before(async () => {
-	await fastify.listen(0)
+	await fastify.listen({port: 0})
 	port = fastify.server.address().port
 })
 
@@ -154,7 +154,7 @@ t.test('request timeout', async t => {
 	})
 	t.test('times out', async t => {
 		await t.rejects(
-			makeReq({requestTimeout: 500}, {timeouts: {request: 150}}),
+			makeReq({requestTimeout: 2000}, {timeouts: {request: 150}}),
 			{name: 'TimeoutError', type: 'request', message: 'Timeout: request'}
 		)
 	})
@@ -230,7 +230,7 @@ t.test('overall timeout', async t => {
 	})
 	t.test('times out (request)', async t => {
 		await t.rejects(
-			makeReq({requestTimeout: 500}, {timeouts: {overall: 150}}),
+			makeReq({requestTimeout: 2000}, {timeouts: {overall: 150}}),
 			{
 				name: 'TimeoutError',
 				type: 'overall',
@@ -258,7 +258,7 @@ t.test('overall timeout', async t => {
 		})
 	})
 	t.test('alias timeout -> timeouts.overall', async t => {
-		await t.rejects(makeReq({requestTimeout: 500}, {timeout: 150}), {
+		await t.rejects(makeReq({requestTimeout: 2000}, {timeout: 150}), {
 			name: 'TimeoutError',
 			type: 'overall',
 			message: 'Timeout: overall',
@@ -269,7 +269,7 @@ t.test('overall timeout', async t => {
 t.test('Retrying', async t => {
 	t.test('Retry 5 times', async t => {
 		await t.rejects(
-			makeReq({requestTimeout: 1000}, {timeouts: {request: 150}, retry: 5}),
+			makeReq({requestTimeout: 2000}, {timeouts: {request: 150}, retry: 5}),
 			{state: {attempt: 5}, message: 'Timeout: request'}
 		)
 	})
@@ -278,12 +278,12 @@ t.test('Retrying', async t => {
 		const res = await makeReq(
 			{requestTimeout: 500},
 			{
-				timeouts: {request: 250},
+				timeouts: {request: 50},
 				retry: async ({state}) => {
 					if (state.attempt < 2) return true
 					return {
 						options: {
-							timeouts: {request: 1000},
+							timeouts: {request: 2000},
 						},
 					}
 				},
@@ -296,7 +296,7 @@ t.test('Retrying', async t => {
 
 	t.test('Add authorization header and modified body on retry', async t => {
 		const res = await makeReq(
-			{requestTimeout: 500},
+			{requestTimeout: 2000},
 			{
 				timeouts: {request: 250},
 				retry: async ({state}) => {
@@ -307,7 +307,7 @@ t.test('Retrying', async t => {
 							options: {
 								// so it doesn't time out on retry
 								// @ts-ignore
-								body: state.options.body.replace('500', '100'),
+								body: state.options.body.replace('2000', '10'),
 								headers: {
 									...state.options.headers,
 									authorization: 'Bearer sometoken',
@@ -324,7 +324,7 @@ t.test('Retrying', async t => {
 
 	t.test('Change resource on retry', async t => {
 		const res = await makeReq(
-			{requestTimeout: 500},
+			{requestTimeout: 2000},
 			{
 				timeouts: {request: 250},
 				retry: () => {
@@ -347,7 +347,7 @@ t.test(`Providing custom abort signal`, async t => {
 		const controller = new AbortController()
 		setTimeout(() => controller.abort(), 100)
 		await t.rejects(
-			makeReq({requestTimeout: 1000}, {signal: controller.signal}),
+			makeReq({requestTimeout: 2000}, {signal: controller.signal}),
 			{name: 'AbortError'}
 		)
 		t.equal(controller.signal.aborted, true)
@@ -356,7 +356,7 @@ t.test(`Providing custom abort signal`, async t => {
 		const controller = new AbortController()
 		controller.abort()
 		await t.rejects(
-			makeReq({requestTimeout: 500}, {signal: controller.signal}),
+			makeReq({requestTimeout: 2000}, {signal: controller.signal}),
 			{name: 'AbortError'}
 		)
 	})
