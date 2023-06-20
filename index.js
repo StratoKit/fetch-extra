@@ -1,6 +1,6 @@
 const debug = require('debug')
 const {performance} = require('perf_hooks')
-const {ReadableStream, WritableStream} = require('stream/web')
+const {ReadableStream} = require('stream/web')
 const {HttpError, TimeoutError} = require('./errors')
 const dbg = debug('fetch')
 const {RESPONSE_TYPES, STATE_INTERNAL} = require('./constants')
@@ -182,10 +182,12 @@ const prepareOptions = state => {
 		abortController = new AbortController()
 		userSignal = options.signal
 		if (userSignal) {
-			if (userSignal.aborted) {
-				throw new DOMException('The operation was aborted.', 'AbortError')
+			userSignalHandler = () => {
+				abortController.abort(userSignal.reason)
 			}
-			userSignalHandler = arg => abortController.abort(arg)
+			if (userSignal.aborted) {
+				userSignalHandler()
+			}
 			userSignal.addEventListener('abort', userSignalHandler, {
 				once: true,
 			})
@@ -202,7 +204,7 @@ const prepareOptions = state => {
 				myTimeouts[reason] = setTimeout(() => {
 					dbg(`${state.fullId}`, reason, 'timeout')
 					state[STATE_INTERNAL].timedout = reason
-					abortController.abort(reason)
+					abortController.abort(new TimeoutError(reason, state))
 				}, ms).unref()
 			}
 			clearAbort = reason => clearTimeout(myTimeouts[reason])
@@ -219,9 +221,6 @@ const prepareOptions = state => {
 
 	const onBodyError = error => {
 		if (!state[STATE_INTERNAL].validateStarted) {
-			if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
-				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
-			}
 			state[STATE_INTERNAL].signalCompleted(error)
 		}
 		dbg(state.fullId, `body failed`, error)
@@ -247,6 +246,22 @@ const prepareOptions = state => {
 	})
 }
 
+// Reasoning: https://github.com/nodejs/undici/discussions/2194
+const dump = async body => {
+	try {
+		let limit = 1e5
+		for await (const buf of body) {
+			limit -= buf.byteLength
+			if (limit < 0) {
+				// Leaving for await prematurely will close the stream
+				return
+			}
+		}
+	} catch {
+		// Do nothing...
+	}
+}
+
 const proxyResponse = (response, state) =>
 	new Proxy(response, {
 		get(target, prop, receiver) {
@@ -266,10 +281,6 @@ const proxyResponse = (response, state) =>
 					state[STATE_INTERNAL].signalCompleted()
 					return result
 				} catch (error) {
-					if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
-						// eslint-disable-next-line no-ex-assign
-						error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
-					}
 					dbg(state.fullId, prop, `failed`, error)
 					if (
 						await shouldRetry({
@@ -309,7 +320,6 @@ const fetch = async (resource, options, state) => {
 				options: currOptions,
 				makeAbort,
 				clearAbort,
-				abortController,
 			} = state[STATE_INTERNAL]
 			await currOptions.limiter?.()
 
@@ -340,9 +350,10 @@ const fetch = async (resource, options, state) => {
 				response = /** @type {FetchResponse} */ (
 					new Response(wrapBodyStream(body, state), response)
 				)
+				// We handle this case for now, relevent issue: https://github.com/nodejs/undici/issues/1339
 			} else if (body) {
 				// Clear body from response and consume stream to prevent leaks
-				body.pipeTo(new WritableStream())
+				dump(body)
 				response = /** @type {FetchResponse} */ (new Response(null, response))
 			}
 			response.completed = state.completed
@@ -352,10 +363,9 @@ const fetch = async (resource, options, state) => {
 			if (currOptions.validate?.response) {
 				state[STATE_INTERNAL].validateStarted = true
 				try {
-					// @ts-ignore
-					await currOptions.validate.response(response.clone(), state)
+					await currOptions.validate.response(response, state)
 				} catch (e) {
-					abortController.abort()
+					dump(response.body)
 					throw e
 				}
 			}
@@ -371,10 +381,6 @@ const fetch = async (resource, options, state) => {
 		} catch (error) {
 			// Here we catch request errors only
 			state[STATE_INTERNAL].clearAbort?.('request')
-			if (error.name === 'AbortError' && state[STATE_INTERNAL].timedout) {
-				// eslint-disable-next-line no-ex-assign
-				error = new TimeoutError(state[STATE_INTERNAL].timedout, state)
-			}
 			dbg(`${state.fullId} failed`, error)
 			if (await shouldRetry({state, error})) {
 				continue
