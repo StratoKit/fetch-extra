@@ -16,7 +16,7 @@
 	"author": "StratoKit",
 	"license": "MIT",
 	"engines": {
-		"node": ">=16.8"
+		"node": ">=18.16.1"
 	},
 	"peerDependencies": {
 		"undici": "^5.23.0"
