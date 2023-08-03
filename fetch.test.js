@@ -332,10 +332,13 @@ t.test('Retrying', async t => {
 			{requestTimeout: 2000},
 			{
 				timeouts: {request: 250},
-				retry: () => {
+				retry: ({state}) => {
 					return {
 						resource: `http://localhost:${port}/foo`,
 						options: {
+							// so it doesn't time out on retry
+							// @ts-ignore
+							body: state.options.body.replace('2000', '10'),
 							timeouts: {request: 1000},
 						},
 					}
@@ -350,10 +353,16 @@ t.test('Retrying', async t => {
 t.test(`Providing custom abort signal`, async t => {
 	t.test('aborted after 100 ms', async t => {
 		const controller = new AbortController()
-		setTimeout(() => controller.abort(), 100)
+		class CustomError extends Error {
+			constructor(message) {
+				super(message)
+				this.name = 'CustomError'
+			}
+		}
+		setTimeout(() => controller.abort(new CustomError('foo')), 100)
 		await t.rejects(
 			makeReq({requestTimeout: 2000}, {signal: controller.signal}),
-			{name: 'AbortError'}
+			{name: 'CustomError'}
 		)
 		t.equal(controller.signal.aborted, true)
 	})
@@ -486,4 +495,9 @@ t.test('body', async t => {
 		const res = await makeReq({id: 'null-body-test', status: 204, size: 10})
 		t.equal(res.body, null)
 	})
+})
+
+t.test('makeFetch', async t => {
+	const limitedFetch = fetch.makeFetch(2, 4)
+	t.type(limitedFetch, 'function')
 })

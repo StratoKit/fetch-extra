@@ -16,15 +16,10 @@
 	"author": "StratoKit",
 	"license": "MIT",
 	"engines": {
-		"node": ">=16.8"
+		"node": ">=18.16.1"
 	},
 	"peerDependencies": {
-		"undici": "^5.8.0"
-	},
-	"peerDependenciesMeta": {
-		"undici": {
-			"optional": true
-		}
+		"undici": "^5.23.0"
 	},
 	"overrides": {
 		"debug": "$debug"
@@ -35,13 +30,13 @@
 	},
 	"devDependencies": {
 		"@homer0/prettier-plugin-jsdoc": "^5.1.4",
-		"@types/tap": "^15.0.7",
-		"eslint": "^8.23.0",
 		"eslint-config-prettier": "^8.5.0",
+		"@types/tap": "^15.0.8",
+		"eslint": "^8.45.0",
 		"eslint-plugin-prettier": "^4.2.1",
-		"fastify": "^4.5.3",
 		"prettier": "^2.7.1",
-		"tap": "^16.3.0",
-		"undici": "^5.10.0"
+		"fastify": "^4.20.0",
+		"tap": "^16.3.7",
+		"undici": "^5.22.1"
 	}
 }
