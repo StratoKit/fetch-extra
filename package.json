@@ -19,7 +19,7 @@
 		"node": ">=18.16.1"
 	},
 	"peerDependencies": {
-		"undici": "^5.23.0"
+		"undici": "^6.18.1"
 	},
 	"overrides": {
 		"debug": "$debug"
@@ -37,6 +37,6 @@
 		"prettier": "^2.7.1",
 		"fastify": "^4.20.0",
 		"tap": "^16.3.7",
-		"undici": "^5.22.1"
+		"undici": "^6.18.1"
 	}
 }
