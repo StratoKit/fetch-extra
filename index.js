@@ -362,12 +362,7 @@ const fetch = async (resource, options, state) => {
 
 			if (currOptions.validate?.response) {
 				state[STATE_INTERNAL].validateStarted = true
-				try {
-					await currOptions.validate.response(response, state)
-				} catch (e) {
-					dump(response.body)
-					throw e
-				}
+				await currOptions.validate.response(response, state)
 			}
 
 			if (!hasBody) {
