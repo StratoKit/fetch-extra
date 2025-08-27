@@ -314,6 +314,7 @@ const fetch = async (resource, options, state) => {
 		state.size = undefined
 		state[STATE_INTERNAL].timedout = undefined
 		state[STATE_INTERNAL].validateStarted = false
+		let /** @type {FetchResponse | undefined} */ response
 		try {
 			prepareOptions(state)
 			const {
@@ -333,7 +334,7 @@ const fetch = async (resource, options, state) => {
 			)
 
 			state.startTs = performance.now()
-			let response = /** @type {FetchResponse} */ (
+			response = /** @type {FetchResponse} */ (
 				await origFetch(state.resource, currOptions)
 			)
 			const {body, status} = response
@@ -377,7 +378,7 @@ const fetch = async (resource, options, state) => {
 			// Here we catch request errors only
 			state[STATE_INTERNAL].clearAbort?.('request')
 			dbg(`${state.fullId} failed`, error)
-			if (await shouldRetry({state, error})) {
+			if (await shouldRetry({state, error, response})) {
 				continue
 			}
 			state[STATE_INTERNAL].signalCompleted(error)
