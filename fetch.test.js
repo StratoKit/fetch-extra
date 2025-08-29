@@ -348,6 +348,65 @@ t.test('Retrying', async t => {
 		await res.blob()
 		t.equal(res.headers.get('received-id'), 'foo')
 	})
+
+	t.test('Response available in retry function', async t => {
+		let capturedResponse = null
+
+		const server = fastify()
+		server.get('/test-response', (_request, reply) => {
+			// Always return a 500 error with some headers
+			reply.status(500)
+			reply.header('x-error-code', 'TEMP_ERROR')
+			reply.header('x-request-id', '12345')
+			reply.send({error: 'Server error'})
+		})
+
+		await server.listen({port: 0})
+		const address = server.server.address()
+		const serverPort = typeof address === 'object' ? address?.port : null
+
+		try {
+			await t.rejects(
+				fetch(`http://localhost:${serverPort}/test-response`, {
+					validate: true, // This will cause the 500 to throw an error
+					retry: async ({error: _error, response}) => {
+						capturedResponse = response
+
+						// Verify we can access response and its properties
+						t.ok(response, 'Response should be available in retry function')
+						if (response) {
+							t.equal(
+								response.status,
+								500,
+								'Should have access to response status'
+							)
+							t.equal(
+								response.headers.get('x-error-code'),
+								'TEMP_ERROR',
+								'Should have access to response headers'
+							)
+							t.equal(
+								response.headers.get('x-request-id'),
+								'12345',
+								'Should have access to custom headers'
+							)
+						}
+
+						// Don't retry - we just want to test that response is available
+						return false
+					},
+				}),
+				'Should reject with HttpError'
+			)
+
+			t.ok(
+				capturedResponse,
+				'Should have captured the response in retry function'
+			)
+		} finally {
+			await server.close()
+		}
+	})
 })
 
 t.test(`Providing custom abort signal`, async t => {
