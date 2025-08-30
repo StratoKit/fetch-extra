@@ -8,8 +8,7 @@ const {RESPONSE_TYPES, STATE_INTERNAL} = require('./constants')
 let origFetch = globalThis.fetch,
 	Headers = globalThis.Headers,
 	Request = globalThis.Request,
-	Response = globalThis.Response,
-	DOMException = globalThis.DOMException
+	Response = globalThis.Response
 
 try {
 	const undici = require('undici')
@@ -21,15 +20,8 @@ try {
 	Request = undici.Request
 	// @ts-ignore
 	Response = undici.Response
-	if (!DOMException) {
-		DOMException = require('undici/lib/fetch/constants').DOMException
-	}
 } catch (err) {
-	if (
-		err.code === 'MODULE_NOT_FOUND' &&
-		// @ts-ignore
-		origFetch
-	) {
+	if (err.code === 'MODULE_NOT_FOUND') {
 		// do nothing, we'll use the built-in fetch
 	} else {
 		throw err
@@ -75,43 +67,53 @@ class FetchState {
 	}
 }
 
-const wrapBodyStream = (stream, state) => {
+/** @template T */
+const wrapBodyStream = (
+	/** @type {ReadableStream<T>} */ stream,
+	/** @type {FetchState} */ state
+) => {
 	const {makeAbort, clearAbort, onBodyResolve, onBodyError} =
 		state[STATE_INTERNAL]
-	let reader
+	let reader, started
+	let useTimeout = setTimeout(() => {
+		// eslint-disable-next-line no-console
+		console.warn(`fetch: body stream not consumed for ${state.resource}`)
+	}, 10_000)
+	return /** @type {ReadableStream<T>} */ (
+		new ReadableStream({
+			type: 'bytes',
 
-	return new ReadableStream({
-		type: 'bytes',
-
-		start() {
-			reader = stream.getReader()
-		},
-
-		async pull(controller) {
-			if (!state.bodyTs) {
-				dbg(`${state.fullId} body processing started`)
-				makeAbort?.('body')
-				state.bodyTs = performance.now()
+			start() {
+				clearTimeout(useTimeout)
+				reader = stream.getReader()
 				state.size = 0
-			}
-			makeAbort?.('stall')
-			const {done, value} = await reader.read().catch(e => {
-				onBodyError(e)
-				throw e
-			})
-			clearAbort?.('stall')
-			if (done) {
-				onBodyResolve()
-				return controller.close()
-			}
-			state.size += value.byteLength
-			controller.enqueue(value)
-		},
+			},
 
-		cancel(reason) {
-			reader.cancel(reason)
-		},
-	})
+			async pull(controller) {
+				if (!started) {
+					dbg(`${state.fullId} body processing started`)
+					started = true
+					makeAbort?.('body')
+				}
+				makeAbort?.('stall')
+				const {done, value} = await reader.read().catch(e => {
+					onBodyError(e)
+					throw e
+				})
+				clearAbort?.('stall')
+				if (done) {
+					onBodyResolve()
+					return controller.close()
+				}
+				state.size += value.byteLength
+				controller.enqueue(value)
+			},
+
+			cancel(reason) {
+				reader.cancel(reason)
+			},
+		})
+	)
 }
 
 /**
@@ -301,10 +303,16 @@ const proxyResponse = (response, state) =>
 	})
 
 /**
- * @param {Resource}     resource
- * @param {FetchOptions} [options]
- * @param {FetchState}   [state]
- * @returns {Promise<FetchResponse>}
+ * Fetches a resource with retry logic and additional state management.
+ *
+ * @param {RequestInfo} resource - The resource to fetch.
+ * @param {RequestInit} [options] - The options for the fetch request.
+ * @param {FetchState} [state] - The state object to manage fetch attempts and
+ *   other internal states.
+ * @returns {Promise<FetchResponse>} - A promise that resolves to the fetch
+ *   response.
+ * @throws {Error} - Throws an error if the fetch request fails and should not
+ *   be retried.
  */
 const fetch = async (resource, options, state) => {
 	state ||= new FetchState(resource, options)
@@ -349,7 +357,12 @@ const fetch = async (resource, options, state) => {
 				status !== 304
 			if (hasBody) {
 				response = /** @type {FetchResponse} */ (
-					new Response(wrapBodyStream(body, state), response)
+					new Response(
+						/** @type {any} */ (
+							wrapBodyStream(/** @type {ReadableStream<any>} */ (body), state)
+						),
+						response
+					)
 				)
 				// We handle this case for now, relevent issue: https://github.com/nodejs/undici/issues/1339
 			} else if (body) {
@@ -406,7 +419,9 @@ const makeFetch = (maxParallel, maxRps) => {
 	}
 }
 
-module.exports = fetch
+module.exports = /** @type {typeof fetch & {makeFetch: typeof makeFetch}} */ (
+	fetch
+)
 Object.assign(module.exports, {
 	makeFetch,
 	HttpError,
