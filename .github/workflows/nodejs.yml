@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18]
+        node-version: [24]
 
     env:
       BASE_REF: ${{ github.base_ref }}
@@ -28,27 +28,28 @@ jobs:
       #   # We use the actions/checkout token here, which got persisted
       #   run: git fetch origin $BASE_REF --depth=1
 
+      - uses: pnpm/action-setup@v4
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
-      - run: npm run lint
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
 
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18]
+        node-version: [18, 20, 22, 24]
 
     env:
       BASE_REF: ${{ github.base_ref }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           # Make git diff HEAD^ work
           fetch-depth: 2
@@ -58,13 +59,14 @@ jobs:
       #   # We use the actions/checkout token here, which got persisted
       #   run: git fetch origin $BASE_REF --depth=1
 
+      - uses: pnpm/action-setup@v4
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
-      - run: npm test
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
         env:
           GH_EVENT: ${{ github.event_name }}

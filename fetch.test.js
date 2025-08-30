@@ -560,3 +560,14 @@ t.test('makeFetch', async t => {
 	const limitedFetch = fetch.makeFetch(2, 4)
 	t.type(limitedFetch, 'function')
 })
+
+t.test('memory', async t => {
+	t.test('download stream', async t => {
+		const mem0 = process.memoryUsage.rss()
+		for (let i = 0; i < 100; i++) {
+			const res = await makeReq({id: 'download stream 1mb', size: 1_000_000})
+			const _blob = await res.blob()
+		}
+		t.ok(process.memoryUsage.rss() < mem0 + 100_000_000)
+	})
+})
