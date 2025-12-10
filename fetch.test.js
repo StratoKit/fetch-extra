@@ -35,7 +35,11 @@ class TimeoutStream extends Readable {
 			this.push(null)
 			return
 		}
-		if (this.speed) await delay((toTransfer / this.speed) * 1000)
+		// In Node 22+, fetch() waits for the first chunk before resolving,
+		// so we send the first chunk immediately to avoid timeout during fetch()
+		if (this.speed && this._transferred > 0) {
+			await delay((toTransfer / this.speed) * 1000)
+		}
 		if (this.timeouts.length && this.timeouts[0].after <= this._transferred) {
 			this.dbg(`bodyTimeout ${this.timeouts[0].time} ms`)
 			await delay(this.timeouts[0].time)

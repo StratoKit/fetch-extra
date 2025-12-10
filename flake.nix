@@ -15,8 +15,8 @@
         with pkgs; [
           bashInteractive
           # NodeJS
-          nodejs_20
-          corepack_20
+          nodejs_22
+          corepack_22
         ];
       makeDevShell = system: pkgs: {
         default = pkgs.mkShell {
