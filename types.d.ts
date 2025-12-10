@@ -1,19 +1,19 @@
 declare module 'fetch-extra'
 
-type Resource = RequestInfo
-type FetchResponse = Response & {
+export type Resource = RequestInfo
+export type FetchResponse = Response & {
 	completed: Promise<FetchStats>
 }
-type RetryResponse =
+export type RetryResponse =
 	| {
 			resource?: Resource
 			options?: FetchOptions
 	  }
 	| boolean
-type RetryDef =
+export type RetryDef =
 	| number
 	| ((params: RetryFnParams) => Promise<RetryResponse> | RetryResponse)
-declare class FetchState {
+export declare class FetchState {
 	id: number | string
 	resource: Resource
 	options: FetchOptions
@@ -25,19 +25,19 @@ declare class FetchState {
 	bodyTs?: number
 	size?: number
 }
-type FetchStats = {
+export type FetchStats = {
 	size: number
 	duration: number
 	attempts: number
 	speed: number
 }
-type RetryFnParams = {
+export type RetryFnParams = {
 	state: FetchState
 	error?: Error
 	response?: FetchResponse
 }
-type ValidateFn = (data: any, state: FetchState) => Promise<void> | void
-type FetchOptions = RequestInit & {
+export type ValidateFn = (data: any, state: FetchState) => Promise<void> | void
+export type FetchOptions = RequestInit & {
 	retry?: RetryDef
 	timeout?: number
 	timeouts?: {

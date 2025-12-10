@@ -1,11 +1,10 @@
 /* eslint no-shadow: ["error", { "allow": ["t"] }] */
-const t = require('tap')
-const fetch = require('.')
-const {fastify} = require('fastify')
-const {Readable} = require('stream')
-const {Blob} = require('buffer')
-// @ts-ignore
-const debug = require('debug')
+import {describe, test, expect, beforeAll, afterAll} from 'vitest'
+import fetch, {makeFetch} from './index.js'
+import {fastify} from 'fastify'
+import {Readable} from 'stream'
+import {Blob} from 'buffer'
+import debug from 'debug'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms).unref())
 
@@ -36,7 +35,11 @@ class TimeoutStream extends Readable {
 			this.push(null)
 			return
 		}
-		if (this.speed) await delay((toTransfer / this.speed) * 1000)
+		// In Node 22+, fetch() waits for the first chunk before resolving,
+		// so we send the first chunk immediately to avoid timeout during fetch()
+		if (this.speed && this._transferred > 0) {
+			await delay((toTransfer / this.speed) * 1000)
+		}
 		if (this.timeouts.length && this.timeouts[0].after <= this._transferred) {
 			this.dbg(`bodyTimeout ${this.timeouts[0].time} ms`)
 			await delay(this.timeouts[0].time)
@@ -120,7 +123,7 @@ let port
  * 	status?: number
  * 	id?: string
  * }} [reqOptions]
- * @param {FetchOptions} [options]
+ * @param {import('./types.d.ts').FetchOptions} [options]
  */
 const makeReq = async (reqOptions, options) => {
 	return await fetch(`http://localhost:${port}/${reqOptions?.id || ''}`, {
@@ -131,155 +134,183 @@ const makeReq = async (reqOptions, options) => {
 	})
 }
 
-t.before(async () => {
+beforeAll(async () => {
 	await app.listen({port: 0})
 	// @ts-ignore
 	port = app.server.address().port
 })
 
-t.teardown(async () => {
+afterAll(async () => {
 	await app.close()
 })
 
-t.test('no options', async t => {
+test('no options', async () => {
 	const result = await fetch(`http://localhost:${port}`)
-	t.equal(result.ok, true)
-	t.equal(await result.text(), 'hello')
+	expect(result.ok).toBe(true)
+	expect(await result.text()).toBe('hello')
 })
 
-t.test('no timeout', async t => {
+test('no timeout', async () => {
 	const res = await makeReq()
-	t.ok(await res.blob())
+	expect(await res.blob()).toBeTruthy()
 })
 
-t.test('request timeout', async t => {
-	t.test('makes it on time', async t => {
+describe('request timeout', () => {
+	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {request: 150}})
-		t.ok(await res.blob())
+		expect(await res.blob()).toBeTruthy()
 	})
-	t.test('times out', async t => {
-		await t.rejects(
-			makeReq({requestTimeout: 2000}, {timeouts: {request: 150}}),
-			{name: 'TimeoutError', type: 'request', message: 'Timeout: request'}
-		)
+	test('times out', async () => {
+		try {
+			await makeReq({requestTimeout: 2000}, {timeouts: {request: 150}})
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('request')
+			expect(err.message).toMatch('Timeout: request')
+		}
 	})
 })
 
-t.test('body timeout', async t => {
-	t.test('makes it on time', async t => {
+describe('body timeout', () => {
+	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {body: 150}})
-		t.ok(res)
-		t.ok(await res.blob())
+		expect(res).toBeTruthy()
+		expect(await res.blob()).toBeTruthy()
 	})
-	t.test('times out (no progress)', async t => {
+	test('times out (no progress)', async () => {
 		const res = await makeReq(
 			{bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {body: 150}}
 		)
-		t.ok(res)
-		await t.rejects(res.blob(), {
-			name: 'TimeoutError',
-			type: 'body',
-			message: 'Timeout: body',
-		})
+		expect(res).toBeTruthy()
+		try {
+			await res.blob()
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('body')
+			expect(err.message).toMatch('Timeout: body')
+		}
 	})
-	t.test('times out (slow progress)', async t => {
+	test('times out (slow progress)', async () => {
 		const res = await makeReq({speed: 128 * 1024}, {timeouts: {body: 150}})
-		t.ok(res)
-		await t.rejects(res.blob(), {
-			name: 'TimeoutError',
-			type: 'body',
-			message: 'Timeout: body',
-		})
+		expect(res).toBeTruthy()
+		try {
+			await res.blob()
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('body')
+			expect(err.message).toMatch('Timeout: body')
+		}
 	})
 })
 
-t.test('stall timeout', async t => {
-	t.test('makes it on time', async t => {
+describe('stall timeout', () => {
+	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {stall: 250}})
-		t.ok(res)
-		t.ok(await res.blob())
+		expect(res).toBeTruthy()
+		expect(await res.blob()).toBeTruthy()
 	})
-	t.test('times out (no progress)', async t => {
+	test('times out (no progress)', async () => {
 		const res = await makeReq(
 			{bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {stall: 150}}
 		)
-		t.ok(res)
-		await t.rejects(res.blob(), {
-			name: 'TimeoutError',
-			type: 'stall',
-			message: 'Timeout: stall',
-		})
+		expect(res).toBeTruthy()
+		try {
+			await res.blob()
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('stall')
+			expect(err.message).toMatch('Timeout: stall')
+		}
 	})
-	t.test('does not time out (no progress but for short term)', async t => {
+	test('does not time out (no progress but for short term)', async () => {
 		const res = await makeReq(
 			{bodyTimeouts: [{after: 500, time: 50}]},
 			{timeouts: {stall: 250}}
 		)
-		t.ok(res)
-		t.ok(await res.blob())
+		expect(res).toBeTruthy()
+		expect(await res.blob()).toBeTruthy()
 	})
-	t.test('does not time out (slow progress)', async t => {
+	test('does not time out (slow progress)', async () => {
 		const res = await makeReq({speed: 2048 * 1024}, {timeouts: {stall: 100}})
-		t.ok(res)
-		t.ok(await res.blob())
+		expect(res).toBeTruthy()
+		expect(await res.blob()).toBeTruthy()
 	})
 })
 
-t.test('overall timeout', async t => {
-	t.test('makes it on time', async t => {
+describe('overall timeout', () => {
+	test('makes it on time', async () => {
 		const res = await makeReq({}, {timeouts: {overall: 150}})
-		t.ok(res)
-		t.ok(await res.blob())
+		expect(res).toBeTruthy()
+		expect(await res.blob()).toBeTruthy()
 	})
-	t.test('times out (request)', async t => {
-		await t.rejects(
-			makeReq({requestTimeout: 2000}, {timeouts: {overall: 150}}),
-			{
-				name: 'TimeoutError',
-				type: 'overall',
-				message: 'Timeout: overall',
-			}
-		)
+	test('times out (request)', async () => {
+		try {
+			await makeReq({requestTimeout: 2000}, {timeouts: {overall: 150}})
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('overall')
+			expect(err.message).toMatch('Timeout: overall')
+		}
 	})
-	t.test('times out (body)', async t => {
+	test('times out (body)', async () => {
 		const res = await makeReq(
 			{bodyTimeouts: [{after: 500, time: 500}]},
 			{timeouts: {overall: 150}}
 		)
-		await t.rejects(res.blob(), {
-			name: 'TimeoutError',
-			type: 'overall',
-			message: 'Timeout: overall',
-		})
+		try {
+			await res.blob()
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('overall')
+			expect(err.message).toMatch('Timeout: overall')
+		}
 	})
-	t.test('times out (body, slow progress)', async t => {
+	test('times out (body, slow progress)', async () => {
 		const res = await makeReq({speed: 128 * 1024}, {timeouts: {overall: 150}})
-		await t.rejects(res.blob(), {
-			name: 'TimeoutError',
-			type: 'overall',
-			message: 'Timeout: overall',
-		})
+		try {
+			await res.blob()
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('overall')
+			expect(err.message).toMatch('Timeout: overall')
+		}
 	})
-	t.test('alias timeout -> timeouts.overall', async t => {
-		await t.rejects(makeReq({requestTimeout: 2000}, {timeout: 150}), {
-			name: 'TimeoutError',
-			type: 'overall',
-			message: 'Timeout: overall',
-		})
+	test('alias timeout -> timeouts.overall', async () => {
+		try {
+			await makeReq({requestTimeout: 2000}, {timeout: 150})
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('TimeoutError')
+			expect(err.type).toBe('overall')
+			expect(err.message).toMatch('Timeout: overall')
+		}
 	})
 })
 
-t.test('Retrying', async t => {
-	t.test('Retry 5 times', async t => {
-		await t.rejects(
-			makeReq({requestTimeout: 2000}, {timeouts: {request: 150}, retry: 5}),
-			{state: {attempt: 5}, message: 'Timeout: request'}
-		)
+describe('Retrying', () => {
+	test('Retry 5 times', async () => {
+		try {
+			await makeReq(
+				{requestTimeout: 2000},
+				{timeouts: {request: 150}, retry: 5}
+			)
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.state.attempt).toBe(5)
+			expect(err.message).toMatch('Timeout: request')
+		}
 	})
 
-	t.test('Change timeout parameters on retry', async t => {
+	test('Change timeout parameters on retry', async () => {
 		const res = await makeReq(
 			{requestTimeout: 500},
 			{
@@ -295,11 +326,11 @@ t.test('Retrying', async t => {
 			}
 		)
 		await res.blob()
-		await t.resolves(res.completed)
-		t.equal((await res.completed).attempts, 3)
+		await expect(res.completed).resolves.toBeTruthy()
+		expect((await res.completed).attempts).toBe(3)
 	})
 
-	t.test('Add authorization header and modified body on retry', async t => {
+	test('Add authorization header and modified body on retry', async () => {
 		const res = await makeReq(
 			{requestTimeout: 2000},
 			{
@@ -324,10 +355,10 @@ t.test('Retrying', async t => {
 			}
 		)
 		await res.blob()
-		t.equal(res.headers.get('received-authorization'), 'Bearer sometoken')
+		expect(res.headers.get('received-authorization')).toBe('Bearer sometoken')
 	})
 
-	t.test('Change resource on retry', async t => {
+	test('Change resource on retry', async () => {
 		const res = await makeReq(
 			{requestTimeout: 2000},
 			{
@@ -346,10 +377,10 @@ t.test('Retrying', async t => {
 			}
 		)
 		await res.blob()
-		t.equal(res.headers.get('received-id'), 'foo')
+		expect(res.headers.get('received-id')).toBe('foo')
 	})
 
-	t.test('Response available in retry function', async t => {
+	test('Response available in retry function', async () => {
 		let capturedResponse = null
 
 		const server = fastify()
@@ -366,51 +397,35 @@ t.test('Retrying', async t => {
 		const serverPort = typeof address === 'object' ? address?.port : null
 
 		try {
-			await t.rejects(
+			await expect(
 				fetch(`http://localhost:${serverPort}/test-response`, {
 					validate: true, // This will cause the 500 to throw an error
 					retry: async ({error: _error, response}) => {
 						capturedResponse = response
 
 						// Verify we can access response and its properties
-						t.ok(response, 'Response should be available in retry function')
+						expect(response).toBeTruthy()
 						if (response) {
-							t.equal(
-								response.status,
-								500,
-								'Should have access to response status'
-							)
-							t.equal(
-								response.headers.get('x-error-code'),
-								'TEMP_ERROR',
-								'Should have access to response headers'
-							)
-							t.equal(
-								response.headers.get('x-request-id'),
-								'12345',
-								'Should have access to custom headers'
-							)
+							expect(response.status).toBe(500)
+							expect(response.headers.get('x-error-code')).toBe('TEMP_ERROR')
+							expect(response.headers.get('x-request-id')).toBe('12345')
 						}
 
 						// Don't retry - we just want to test that response is available
 						return false
 					},
-				}),
-				'Should reject with HttpError'
-			)
+				})
+			).rejects.toThrow()
 
-			t.ok(
-				capturedResponse,
-				'Should have captured the response in retry function'
-			)
+			expect(capturedResponse).toBeTruthy()
 		} finally {
 			await server.close()
 		}
 	})
 })
 
-t.test(`Providing custom abort signal`, async t => {
-	t.test('aborted after 100 ms', async t => {
+describe(`Providing custom abort signal`, () => {
+	test('aborted after 100 ms', async () => {
 		const controller = new AbortController()
 		class CustomError extends Error {
 			constructor(message) {
@@ -419,35 +434,39 @@ t.test(`Providing custom abort signal`, async t => {
 			}
 		}
 		setTimeout(() => controller.abort(new CustomError('foo')), 100)
-		await t.rejects(
-			makeReq({requestTimeout: 2000}, {signal: controller.signal}),
-			{name: 'CustomError'}
-		)
-		t.equal(controller.signal.aborted, true)
+		try {
+			await makeReq({requestTimeout: 2000}, {signal: controller.signal})
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('CustomError')
+		}
+		expect(controller.signal.aborted).toBe(true)
 	})
-	t.test('aborted immediately', async t => {
+	test('aborted immediately', async () => {
 		const controller = new AbortController()
 		controller.abort()
-		await t.rejects(
-			makeReq({requestTimeout: 2000}, {signal: controller.signal}),
-			{name: 'AbortError'}
-		)
+		try {
+			await makeReq({requestTimeout: 2000}, {signal: controller.signal})
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.name).toBe('AbortError')
+		}
 	})
-	t.test('successful', async t => {
+	test('successful', async () => {
 		const controller = new AbortController()
 		const timeout = setTimeout(() => controller.abort(), 1000)
 		const res = await makeReq({}, {signal: controller.signal})
 		await res.blob()
 		clearTimeout(timeout)
-		t.equal(controller.signal.aborted, false)
+		expect(controller.signal.aborted).toBe(false)
 	})
 })
 
-t.test('Validation', async t => {
-	t.test('throw during validation', async t => {
+describe('Validation', () => {
+	test('throw during validation', async () => {
 		let good = false
-		await t.rejects(
-			makeReq(
+		try {
+			await makeReq(
 				{},
 				{
 					validate: () => {
@@ -458,12 +477,14 @@ t.test('Validation', async t => {
 					},
 					retry: 1,
 				}
-			),
-			{message: 'Error during validation'}
-		)
+			)
+			throw new Error('Should have thrown')
+		} catch (err) {
+			expect(err.message).toBe('Error during validation')
+		}
 	})
 
-	t.test('throw during body validation (blob)', async t => {
+	test('throw during body validation (blob)', async () => {
 		const e = new Error('Error during validating a blob')
 		const res = await makeReq(
 			{},
@@ -475,10 +496,10 @@ t.test('Validation', async t => {
 				},
 			}
 		)
-		await t.rejects(res.blob(), e)
+		await expect(res.blob()).rejects.toThrow(e)
 	})
 
-	t.test('throw during body validation (blob) and retry', async t => {
+	test('throw during body validation (blob) and retry', async () => {
 		let good = false
 		const res = await makeReq(
 			{},
@@ -494,11 +515,11 @@ t.test('Validation', async t => {
 				retry: 5,
 			}
 		)
-		t.type(await res.blob(), Blob)
-		t.equal((await res.completed).attempts, 2)
+		expect(await res.blob()).toBeInstanceOf(Blob)
+		expect((await res.completed).attempts).toBe(2)
 	})
 
-	t.test('default validation', async t => {
+	test('default validation', async () => {
 		/** @type {Error | undefined} */
 		let err
 		const res = await makeReq(
@@ -512,15 +533,14 @@ t.test('Validation', async t => {
 				},
 			}
 		)
-		t.type(await res.blob(), Blob)
-		t.equal((await res.completed).attempts, 2)
-		t.match(
-			err?.message,
+		expect(await res.blob()).toBeInstanceOf(Blob)
+		expect((await res.completed).attempts).toBe(2)
+		expect(err?.message).toMatch(
 			`HTTP 403 - Forbidden (POST http://localhost:${port}/validation-test)`
 		)
 	})
 
-	t.test('alias validate.response: true to defaultValidate', async t => {
+	test('alias validate.response: true to defaultValidate', async () => {
 		/** @type {Error | undefined} */
 		let err
 		const res = await makeReq(
@@ -534,29 +554,39 @@ t.test('Validation', async t => {
 				},
 			}
 		)
-		t.type(await res.blob(), Blob)
-		t.equal((await res.completed).attempts, 2)
-		t.match(
-			err?.message,
+		expect(await res.blob()).toBeInstanceOf(Blob)
+		expect((await res.completed).attempts).toBe(2)
+		expect(err?.message).toMatch(
 			`HTTP 403 - Forbidden (POST http://localhost:${port}/validation-test)`
 		)
 	})
 })
 
-t.test('body', async t => {
-	t.test('0-length body', async t => {
+describe('body', () => {
+	test('0-length body', async () => {
 		const res = await makeReq({id: '0-body-test', size: 0})
-		t.ok(res.body)
+		expect(res.body).toBeTruthy()
 		const blob = await res.blob()
-		t.equal(blob.size, 0)
+		expect(blob.size).toBe(0)
 	})
-	t.test('null body status', async t => {
+	test('null body status', async () => {
 		const res = await makeReq({id: 'null-body-test', status: 204, size: 10})
-		t.equal(res.body, null)
+		expect(res.body).toBe(null)
 	})
 })
 
-t.test('makeFetch', async t => {
-	const limitedFetch = fetch.makeFetch(2, 4)
-	t.type(limitedFetch, 'function')
+test('makeFetch', async () => {
+	const limitedFetch = makeFetch(2, 4)
+	expect(typeof limitedFetch).toBe('function')
+})
+
+describe('memory', () => {
+	test('download stream', async () => {
+		const mem0 = process.memoryUsage.rss()
+		for (let i = 0; i < 100; i++) {
+			const res = await makeReq({id: 'download stream 1mb', size: 1_000_000})
+			const _blob = await res.blob()
+		}
+		expect(process.memoryUsage.rss()).toBeLessThan(mem0 + 100_000_000)
+	})
 })
