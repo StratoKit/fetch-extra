@@ -1,5 +1,5 @@
 // https://github.com/nodejs/undici/blob/main/types/fetch.d.ts#L28
-const RESPONSE_TYPES = new Set([
+export const RESPONSE_TYPES = new Set([
 	'arrayBuffer',
 	'blob',
 	'formData',
@@ -7,6 +7,4 @@ const RESPONSE_TYPES = new Set([
 	'text',
 ])
 
-const STATE_INTERNAL = Symbol('INTERNAL')
-
-module.exports = {RESPONSE_TYPES, STATE_INTERNAL}
+export const STATE_INTERNAL = Symbol('INTERNAL')

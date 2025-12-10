@@ -1,11 +1,10 @@
 /* eslint no-shadow: ["error", { "allow": ["t"] }] */
-const t = require('tap')
-const fetch = require('.')
-const {fastify} = require('fastify')
-const {Readable} = require('stream')
-const {Blob} = require('buffer')
-// @ts-ignore
-const debug = require('debug')
+import t from 'tap'
+import fetch, {makeFetch} from './index.js'
+import {fastify} from 'fastify'
+import {Readable} from 'stream'
+import {Blob} from 'buffer'
+import debug from 'debug'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms).unref())
 
@@ -120,7 +119,7 @@ let port
  * 	status?: number
  * 	id?: string
  * }} [reqOptions]
- * @param {FetchOptions} [options]
+ * @param {import('./types.d.ts').FetchOptions} [options]
  */
 const makeReq = async (reqOptions, options) => {
 	return await fetch(`http://localhost:${port}/${reqOptions?.id || ''}`, {
@@ -557,7 +556,7 @@ t.test('body', async t => {
 })
 
 t.test('makeFetch', async t => {
-	const limitedFetch = fetch.makeFetch(2, 4)
+	const limitedFetch = makeFetch(2, 4)
 	t.type(limitedFetch, 'function')
 })
 

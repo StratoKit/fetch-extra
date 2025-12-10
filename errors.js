@@ -1,4 +1,4 @@
-class HttpError extends Error {
+export class HttpError extends Error {
 	constructor(status, statusText, response, state) {
 		const {
 			fullId,
@@ -15,7 +15,7 @@ class HttpError extends Error {
 	}
 }
 
-class TimeoutError extends Error {
+export class TimeoutError extends Error {
 	constructor(type, state) {
 		const {
 			fullId,
@@ -41,5 +41,3 @@ class TimeoutError extends Error {
 		Error.captureStackTrace(this, TimeoutError)
 	}
 }
-
-module.exports = {HttpError, TimeoutError}
