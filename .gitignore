@@ -8,3 +8,4 @@ data
 config/local.yaml
 config/client-dev.dlls.json
 coverage
+.direnv/
